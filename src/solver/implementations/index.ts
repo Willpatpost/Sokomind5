@@ -9,7 +9,6 @@ export const BUILT_IN_SOLVERS = Object.freeze([
 export {
   CLASSIC_SOLVERS,
   classicAStarSolver,
-  classicBfsSolver,
   classicDfsSolver,
   classicGreedySolver,
   classicIdaStarSolver,
@@ -18,6 +17,7 @@ export {
 export {
   createSokomindSolverAdapter,
   reconstructBidirectionalPath,
+  sokomindDiscoveryBeamWidth,
   sokomindSolver,
   sokomindSolverMetadata,
   solutionFromLegacyPath,
@@ -25,3 +25,12 @@ export {
   type SokomindEngineWorker,
   type SokomindSolverAdapterOptions,
 } from "./sokomind-solver.ts";
+
+export {
+  DEFAULT_SOKOMIND_TUNING,
+  resolveSokomindTuning,
+  sokomindTuningFingerprint,
+  sokomindTuningPayload,
+  type SokomindTuningOverrides,
+  type SokomindTuningProfile,
+} from "./sokomind-tuning.ts";

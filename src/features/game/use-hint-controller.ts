@@ -112,7 +112,7 @@ export function useHintController({
         const handle = client.run(HINT_SOLVER_ID, {
           board: session.board,
           snapshot: session.snapshot,
-          objective: { kind: "pushes", tieBreak: "moves" },
+          objective: { kind: "moves" },
           limits: {
             maxElapsedMs: HINT_TIME_LIMIT_MS,
             maxMemoryBytes: HINT_MEMORY_LIMIT,

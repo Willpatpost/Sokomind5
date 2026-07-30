@@ -46,8 +46,7 @@ but never trusts the bad state.
 
 The Progress dialog exports readable versioned JSON. Import validates the
 schema and merges records rather than replacing them. The better record is the
-one with fewer pushes, then fewer moves, and its original completion timestamp
-is preserved.
+one with fewer moves, and its original completion timestamp is preserved.
 
 Reset progress removes completed personal bests from the active application
 state after an explicit confirmation. It does not change the current attempt

@@ -24,20 +24,39 @@ const WALL = "O";
 const FLOOR = " ";
 const ROBOT = "R";
 
+export const TYPED_LABELS = [
+  "A",
+  "B",
+  "C",
+  "D",
+  "E",
+  "F",
+  "G",
+  "H",
+  "I",
+  "J",
+  "K",
+  "L",
+  "M",
+  "N",
+  "P",
+  "Q",
+  "T",
+  "U",
+  "V",
+  "W",
+  "Y",
+  "Z",
+] as const;
+
+export type TypedLabel = (typeof TYPED_LABELS)[number];
+
 export const EDITOR_TOOLS = [
   { symbol: "O", label: "Wall", group: "terrain" },
   { symbol: " ", label: "Floor", group: "terrain" },
   { symbol: "R", label: "Robot", group: "pieces" },
-  { symbol: "X", label: "Box", group: "pieces" },
-  { symbol: "S", label: "Goal", group: "pieces" },
-  { symbol: "A", label: "Box A", group: "labeled" },
-  { symbol: "a", label: "Goal a", group: "labeled" },
-  { symbol: "B", label: "Box B", group: "labeled" },
-  { symbol: "b", label: "Goal b", group: "labeled" },
-  { symbol: "C", label: "Box C", group: "labeled" },
-  { symbol: "c", label: "Goal c", group: "labeled" },
-  { symbol: "D", label: "Box D", group: "labeled" },
-  { symbol: "d", label: "Goal d", group: "labeled" },
+  { symbol: "X", label: "Generic box", group: "pieces" },
+  { symbol: "S", label: "Generic goal", group: "pieces" },
 ] as const;
 
 export const MIN_SIZE = 3;
@@ -57,6 +76,18 @@ function removeRobot(cells: string[][]): void {
       if (cells[r][c] === ROBOT) cells[r][c] = FLOOR;
     }
   }
+}
+
+export function isTypedBoxSymbol(symbol: string): symbol is TypedLabel {
+  return (TYPED_LABELS as readonly string[]).includes(symbol);
+}
+
+export function isTypedGoalSymbol(symbol: string): boolean {
+  return (
+    symbol.length === 1 &&
+    (TYPED_LABELS as readonly string[]).includes(symbol.toUpperCase()) &&
+    symbol === symbol.toLowerCase()
+  );
 }
 
 export function createInitialState(): EditorState {
@@ -155,7 +186,7 @@ export function stateToPuzzle(state: EditorState): PuzzleDefinition {
   let boxes = 0;
   for (const row of state.cells) {
     for (const cell of row) {
-      if (cell === "X" || (/^[A-Z]$/.test(cell) && !"ORSX".includes(cell))) {
+      if (cell === "X" || isTypedBoxSymbol(cell)) {
         boxes++;
       }
     }
@@ -187,10 +218,10 @@ export function validateEditorState(state: EditorState): EditorValidation {
       if (cell === ROBOT) robotCount++;
       if (cell === "X") boxCounts.set("X", (boxCounts.get("X") ?? 0) + 1);
       if (cell === "S") goalCounts.set("S", (goalCounts.get("S") ?? 0) + 1);
-      if (/^[A-Z]$/.test(cell) && !"ORSX".includes(cell)) {
+      if (isTypedBoxSymbol(cell)) {
         boxCounts.set(cell, (boxCounts.get(cell) ?? 0) + 1);
       }
-      if (/^[a-z]$/.test(cell)) {
+      if (isTypedGoalSymbol(cell)) {
         goalCounts.set(cell.toUpperCase(), (goalCounts.get(cell.toUpperCase()) ?? 0) + 1);
       }
     }

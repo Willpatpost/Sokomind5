@@ -4,6 +4,34 @@
 
 const PREPARED_BOARD_SCHEMA = 3;
 const boardContentKey = rows => rows.join("\n");
+const ESTIMATED_BOARD_CACHE_ENTRY_BYTES = 384;
+
+const BOARD_CACHE_MAPS = Object.freeze([
+  "heuristicMemo",
+  "discoveryHeuristicMemo",
+  "playerPushDistances",
+  "deadlockMemo",
+  "patternDeadlockMemo",
+  "patternWindowMemo",
+  "commitmentMemo",
+  "stateCommitmentMemo",
+  "commitmentPushDistances",
+  "supportDependencyMemo",
+  "goalAccessMemo",
+  "localRoomMemo",
+  "shortestCorridorMemo",
+  "localCorralMemo",
+  "doorwayFlowMemo",
+  "reachabilityMemo",
+  "pushTransitionMemo",
+]);
+
+const BOARD_TABLE_MAPS = Object.freeze([
+  "goalRoomPackingTables",
+  "roomPatternTables",
+  "pairConflictTables",
+  "capacityPatternTables",
+]);
 
 function estimatePreparedBoardBytes(board) {
   const stringBytes = values => [...values].reduce((sum, value) => sum + 2 * value.length, 0);
@@ -25,6 +53,32 @@ function estimatePreparedBoardBytes(board) {
     nestedMapEntries(board.goalPushTables.byGoal) * 12 +
     nestedMapEntries(board.playerPushDistances) * 12
   );
+}
+
+function boardCacheMemorySnapshot(board) {
+  let cacheEntries = 0;
+  for (const name of BOARD_CACHE_MAPS) {
+    cacheEntries += board[name]?.size || 0;
+  }
+  for (const name of BOARD_TABLE_MAPS) {
+    const tables = board[name];
+    if (!tables?.values) continue;
+    cacheEntries += tables.size || 0;
+    for (const table of tables.values()) {
+      cacheEntries += table?.states?.size || 0;
+    }
+  }
+  return {
+    boardBytes: board._estimatedStaticBytes || 0,
+    cacheEntries,
+    cacheBytes: cacheEntries * ESTIMATED_BOARD_CACHE_ENTRY_BYTES,
+  };
+}
+
+function attachBoardMemorySampler(board) {
+  board._estimatedStaticBytes = Math.max(0, estimatePreparedBoardBytes(board));
+  board.metrics._engineMemorySampler = () => boardCacheMemorySnapshot(board);
+  return board;
 }
 
 function createPreparedBoardSeed(board) {
@@ -117,7 +171,7 @@ function hydratePreparedBoard(data, seed, metrics) {
     metrics,
   };
   metrics.preparedBoardHydrateMs += now() - started;
-  return board;
+  return attachBoardMemorySampler(board);
 }
 
 function validatePuzzleRows(rows) {
@@ -193,7 +247,7 @@ function parse(data) {
   const goalPushTables = compileGoalPushTables(singleBoxGraph, goals, metrics);
   const topology = analyzeTopology(floor, goals);
   metrics.parseMs += now() - parseStarted;
-  return {
+  return attachBoardMemorySampler({
     rows: data.rows, floor, walls, goals, goalsByLabel, pushDistances, goalPressure,
     topology, heuristicMemo: new Map(), discoveryHeuristicMemo: new Map(),
     assignmentMemo: new WeakMap(), discoveryAssignmentMemo: new WeakMap(),
@@ -218,7 +272,7 @@ function parse(data) {
     boxSignatureMemo: new WeakMap(),
     boxIdentityMemo: new WeakMap(),
     singleBoxGraph, goalPushTables, dense, metrics,
-  };
+  });
 }
 
 function compileDenseBoard(floor, goals, metrics) {
@@ -603,6 +657,8 @@ const SokomindBoard = {
   PREPARED_BOARD_SCHEMA,
   boardContentKey,
   estimatePreparedBoardBytes,
+  boardCacheMemorySnapshot,
+  attachBoardMemorySampler,
   createPreparedBoardSeed,
   preparedBoardMatches,
   hydratePreparedBoard,

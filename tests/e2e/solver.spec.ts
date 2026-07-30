@@ -14,26 +14,20 @@ async function openSolver(page: Page) {
   return dialog;
 }
 
-test("discovers the six search algorithms and exposes an accessible configuration", async ({
+test("discovers five move-search algorithms and exposes an accessible configuration", async ({
   page,
 }) => {
   const dialog = await openSolver(page);
   const algorithm = dialog.getByLabel("Algorithm");
-  const objective = dialog.getByLabel("Objective");
 
-  await expect(algorithm.locator("option")).toHaveCount(6);
-  await expect(objective).toHaveValue("pushes");
+  await expect(algorithm.locator("option")).toHaveCount(5);
+  await expect(dialog.getByLabel("Objective")).toHaveCount(0);
   await expect(dialog.getByLabel("Time limit")).toHaveValue("60000");
   await expect(dialog.getByRole("button", { name: "Start search" })).toBeEnabled();
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeDisabled();
   await expect(dialog.getByRole("heading", { name: "Status log" })).toBeVisible();
 
-  await algorithm.selectOption("classic-bfs");
-  await expect(objective.locator("option")).toHaveCount(1);
-  await expect(objective).toHaveValue("pushes");
-
   await algorithm.selectOption("classic-astar");
-  await expect(objective.locator("option")).toHaveCount(3);
 
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])
@@ -51,8 +45,8 @@ test("solves a typed room with Sokomind Solver and plays its verified route", as
     dialog.getByRole("heading", { name: "Route found" }),
   ).toBeVisible();
   await expect(dialog).toContainText("Found 1 moves and 1 pushes.");
-  await expect(dialog).toContainText("Found by Sokomind Solver for Pushes.");
-  await expect(dialog).toContainText("First found");
+  await expect(dialog).toContainText("Found by Sokomind Solver.");
+  await expect(dialog).toContainText("Best found");
 
   await dialog.getByRole("button", { name: "Play solution" }).click();
   await expect(dialog).toBeHidden();
@@ -70,7 +64,7 @@ test("solves First Steps with A* and plays the verified route", async ({
     dialog.getByRole("heading", { name: "Route found" }),
   ).toBeVisible();
   await expect(dialog).toContainText("Found 1 moves and 1 pushes.");
-  await expect(dialog).toContainText("Found by A* Search for Pushes.");
+  await expect(dialog).toContainText("Found by A* Search.");
   await expect(dialog).toContainText("Optimal");
   await dialog.getByText("Search diagnostics").click();
   await expect(dialog).toContainText("Unique states");
@@ -100,17 +94,26 @@ test("Sokomind Solver finds a replay-verified Grand Hall route", async ({
   await expect(
     dialog.getByRole("heading", { name: "Route found" }),
   ).toBeVisible({ timeout: 60_000 });
-  await expect(dialog).toContainText("Found 1,010 moves and 316 pushes.");
-  await expect(dialog).toContainText("Found by Sokomind Solver for Pushes.");
+  const resultPanel = dialog.locator('[data-status="solved"]');
+  const summary = resultPanel.getByText(
+    /^Found [\d,]+ moves and [\d,]+ pushes\.$/,
+  );
+  await expect(summary).toBeVisible();
+  const summaryText = (await summary.textContent()) ?? "";
+  const moveMatch = summaryText.match(/^Found ([\d,]+) moves/u);
+  expect(moveMatch).not.toBeNull();
+  const moves = Number((moveMatch?.[1] ?? "").replaceAll(",", ""));
+  expect(moves).toBeLessThanOrEqual(900);
+  await expect(dialog).toContainText("Found by Sokomind Solver.");
   await expect(dialog.getByRole("button", { name: "Play solution" })).toBeEnabled();
 });
 
-test("cancels a running Grand Hall breadth-first search", async ({ page }) => {
+test("cancels a running Grand Hall A* search", async ({ page }) => {
   await page.goto("./#/play/huge");
   await expect(page.getByRole("heading", { name: "Grand Hall" })).toBeVisible();
 
   const dialog = await openSolver(page);
-  await dialog.getByLabel("Algorithm").selectOption("classic-bfs");
+  await dialog.getByLabel("Algorithm").selectOption("classic-astar");
   await dialog.getByLabel("Time limit").selectOption("120000");
 
   const cancel = dialog.getByRole("button", { name: "Cancel", exact: true });

@@ -15,7 +15,7 @@ import {
 const capabilities = Object.freeze({
   executionTargets: ["web-worker"] as const,
   runtime: "javascript",
-  objectives: ["moves", "pushes"] as const,
+  objectives: ["moves"] as const,
   quality: "bounded",
   labeledBoxes: true,
   genericBoxes: true,

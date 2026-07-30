@@ -37,6 +37,7 @@ test("round-trip encode then decode preserves puzzle data", () => {
 test("encode produces #custom= prefix", () => {
   const hash = encodePuzzleUrl(SAMPLE_PUZZLE);
   assert.ok(hash.startsWith("#custom="));
+  assert.match(hash.slice("#custom=".length), /^[A-Za-z0-9_-]+$/);
 });
 
 test("decode returns null for non-custom hash", () => {
@@ -98,7 +99,7 @@ test("box count is computed from rows", () => {
       "OOOOOOO",
       "O R   O",
       "O X A O",
-      "O B s O",
+      "O B   O",
       "O S a O",
       "O   b O",
       "OOOOOOO",
@@ -108,4 +109,42 @@ test("box count is computed from rows", () => {
   const decoded = decodeCustomPuzzle(hash);
   assert.ok(decoded);
   assert.equal(decoded.boxes, 3);
+});
+
+test("decodes both editor-route data and legacy standard Base64", () => {
+  const compact = {
+    t: SAMPLE_PUZZLE.title,
+    d: SAMPLE_PUZZLE.difficulty,
+    h: SAMPLE_PUZZLE.hint,
+    r: SAMPLE_PUZZLE.rows,
+  };
+  const legacy = Buffer.from(JSON.stringify(compact), "utf8").toString("base64");
+
+  const fromRoute = decodeCustomPuzzle(
+    `#/editor?custom=${encodeURIComponent(legacy)}`,
+  );
+  assert.ok(fromRoute);
+  assert.deepEqual(fromRoute.rows, SAMPLE_PUZZLE.rows);
+});
+
+test("rejects malformed editor dimensions and reserved typed goals", () => {
+  const malformed = Buffer.from(
+    JSON.stringify({
+      t: "Bad room",
+      d: "beginner",
+      r: ["OOOO", "ORxO", "OXSO", "OOOO"],
+    }),
+    "utf8",
+  ).toString("base64url");
+  assert.equal(decodeCustomPuzzle(`#custom=${malformed}`), null);
+
+  const ragged = Buffer.from(
+    JSON.stringify({
+      t: "Ragged room",
+      d: "beginner",
+      r: ["OOOOO", "OR O", "OXSOO", "OOOOO"],
+    }),
+    "utf8",
+  ).toString("base64url");
+  assert.equal(decodeCustomPuzzle(`#custom=${ragged}`), null);
 });

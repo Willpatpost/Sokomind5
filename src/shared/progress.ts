@@ -25,11 +25,7 @@ function isBetterRecord(
   candidate: Pick<PuzzleRecord, "moves" | "pushes">,
   current: Pick<PuzzleRecord, "moves" | "pushes"> | undefined,
 ): boolean {
-  return (
-    !current ||
-    candidate.pushes < current.pushes ||
-    (candidate.pushes === current.pushes && candidate.moves < current.moves)
-  );
+  return !current || candidate.moves < current.moves;
 }
 
 function isPuzzleRecord(value: unknown): value is PuzzleRecord {

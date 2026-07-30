@@ -1,5 +1,4 @@
 import type {
-  SolverObjectiveKind,
   SolverPhase,
   SolverResult,
 } from "@/src/solver";
@@ -49,17 +48,6 @@ export function formatRate(
     return "—";
   }
   return `${INTEGER_FORMAT.format((expandedStates * 1_000) / elapsedMs)}/s`;
-}
-
-export function objectiveLabel(kind: SolverObjectiveKind): string {
-  switch (kind) {
-    case "moves":
-      return "Moves";
-    case "pushes":
-      return "Pushes";
-    case "combined":
-      return "Combined";
-  }
 }
 
 export function phaseLabel(phase: SolverPhase | undefined): string {

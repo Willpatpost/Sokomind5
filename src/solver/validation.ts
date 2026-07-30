@@ -45,7 +45,7 @@ export class SolverValidationError extends TypeError {
 type Issues = SolverValidationIssue[];
 type UnknownRecord = Record<string, unknown>;
 
-const OBJECTIVE_KINDS = new Set(["moves", "pushes", "combined"]);
+const OBJECTIVE_KINDS = new Set(["moves"]);
 const PHASES = new Set(["preparing", "searching", "improving", "verifying"]);
 const EXECUTION_TARGETS = new Set(["main-thread", "web-worker"]);
 const RUNTIMES = new Set(["javascript", "webassembly", "hybrid"]);
@@ -557,55 +557,9 @@ function checkObjective(
   issues: Issues,
 ): value is SolverObjective {
   if (!checkRecord(value, path, issues)) return false;
-  if (!checkEnum(value.kind, OBJECTIVE_KINDS, `${path}.kind`, issues)) {
-    return false;
-  }
-
-  if (value.kind === "moves") {
-    let valid = checkExactKeys(value, ["kind", "tieBreak"], path, issues);
-    valid =
-      checkEnum(
-        value.tieBreak,
-        new Set(["pushes", "none"]),
-        `${path}.tieBreak`,
-        issues,
-      ) && valid;
-    return valid;
-  }
-  if (value.kind === "pushes") {
-    let valid = checkExactKeys(value, ["kind", "tieBreak"], path, issues);
-    valid =
-      checkEnum(
-        value.tieBreak,
-        new Set(["moves", "none"]),
-        `${path}.tieBreak`,
-        issues,
-      ) && valid;
-    return valid;
-  }
-
-  let valid = checkExactKeys(
-    value,
-    ["kind", "moveWeight", "pushWeight"],
-    path,
-    issues,
-  );
+  let valid = checkExactKeys(value, ["kind"], path, issues);
   valid =
-    checkFiniteNonNegative(value.moveWeight, `${path}.moveWeight`, issues) &&
-    valid;
-  valid =
-    checkFiniteNonNegative(value.pushWeight, `${path}.pushWeight`, issues) &&
-    valid;
-  if (
-    typeof value.moveWeight === "number" &&
-    typeof value.pushWeight === "number" &&
-    value.moveWeight === 0 &&
-    value.pushWeight === 0
-  ) {
-    valid =
-      issue(issues, path, "combined objective needs a positive weight") &&
-      valid;
-  }
+    checkEnum(value.kind, OBJECTIVE_KINDS, `${path}.kind`, issues) && valid;
   return valid;
 }
 
@@ -722,18 +676,10 @@ function checkStep(
 }
 
 export function scoreSolverObjective(
-  objective: SolverObjective,
+  _objective: SolverObjective,
   moves: number,
-  pushes: number,
 ): number {
-  switch (objective.kind) {
-    case "moves":
-      return moves;
-    case "pushes":
-      return pushes;
-    case "combined":
-      return moves * objective.moveWeight + pushes * objective.pushWeight;
-  }
+  return moves;
 }
 
 function checkSolution(
@@ -802,7 +748,6 @@ function checkSolution(
   const expectedScore = scoreSolverObjective(
     solution.objective,
     solution.moves,
-    solution.pushes,
   );
   if (solution.objectiveScore !== expectedScore) {
     valid =

@@ -1,6 +1,6 @@
 # Solver integration
 
-The solver package contains six production adapters plus the infrastructure
+The solver package contains five production adapters plus the infrastructure
 needed to add more. An algorithm becomes available by implementing
 `SolverAdapter` and registering it at the worker composition root.
 
@@ -8,28 +8,25 @@ needed to add more. An algorithm becomes available by implementing
 
 | Adapter | Frontier | Objectives | Guarantee |
 | --- | --- | --- | --- |
-| `sokomind-solver` | structural macro + guided/bidirectional portfolio | moves, pushes, combined | deterministic structural lane; first verified portfolio route |
-| `classic-dfs` | LIFO stack | moves, pushes, combined | deterministic first route |
-| `classic-bfs` | FIFO queue | pushes | minimum pushes |
-| `classic-greedy` | stable heuristic heap | moves, pushes, combined | deterministic first route |
-| `classic-astar` | stable `g + h` heap | moves, pushes, combined | optimal requested cost |
-| `classic-ida-star` | iterative deepening `f` contours | moves, pushes, combined | intended optimal search; see follow-up audit |
+| `sokomind-solver` | structural/guided portfolio + local rewrite | moves | best replay-verified route within the run budget |
+| `classic-dfs` | LIFO stack | moves | deterministic first route |
+| `classic-greedy` | stable heuristic heap | moves | deterministic first route |
+| `classic-astar` | stable `g + h` heap | moves | minimum moves |
+| `classic-ida-star` | iterative deepening `f` contours | moves | minimum moves |
 
-All five classic adapters use the same push-macro graph. A successor consists of an exact
+All four classic adapters use the same push-macro graph. A successor consists of an exact
 shortest keeper walk followed by one legal push. Search state retains the true
 post-push keeper cell and a canonical signature that treats boxes with the same
-label as interchangeable. For the pure push objective, keeper cells in the same
-reachable region share one state identity because walking distance is
-irrelevant; move-sensitive objectives retain the exact keeper cell.
+label as interchangeable. Because total movement is the sole objective, every
+state identity retains the exact keeper cell and every macro edge includes its
+shortest walking distance.
 
 The A* lower bound is a label-aware minimum-cost assignment. For every matching
 box/goal pair, the cost is a reverse-push distance that respects walls and
 required support cells while removing all other boxes. The relaxed puzzle
 cannot cost more than the real one, so the assignment is admissible:
 
-- push objective: `h = P`;
-- move objective: `h = P`, because every remaining push is also a move;
-- combined objective: `h = P * (moveWeight + pushWeight)`.
+The move lower bound is `h = P`, because every remaining push is also a move.
 
 Only proven static dead cells and fully blocked 2x2 formations are hard-pruned.
 Every candidate route is reconstructed from parent links and independently
@@ -56,7 +53,11 @@ structural lane misses or exhausts its share, the remaining budget goes to a
 guided push lane with compact forward and reverse frontiers when the browser
 has enough CPU and memory. This keeps Grand Hall's low-memory fast path while
 ensuring short runs still reach discovery. Smaller boards start directly with
-the discovery portfolio.
+the discovery portfolio. For rooms with at least eight boxes, a web-safe
+memory declaration selects a 256-wide direct beam; the explicit 1.5 GiB class
+selects 512. On The Exchange, width 256 cut generated successors from roughly
+1.2 million to 449,000 and solved in 39 seconds, although compacting transient
+successors remains necessary to bring peak process RSS down further.
 
 Bidirectional meeting keys use compact typed box tokens; the adapter decodes
 those tokens before finding the robot-only bridge, fixing the obsolete key
@@ -67,23 +68,50 @@ the adapter falls back to the existing cooperative Greedy engine.
 The legacy kernel runs in a same-origin nested module worker. The outer solver
 worker therefore remains available to terminate the kernel on cancellation,
 elapsed-time, state, or estimated-memory limits. Concurrent worker estimates
-and retained bidirectional records are added against one run-wide ceiling;
-Chromium's non-standard process-wide heap sample is not mistaken for
-solver-owned memory. Unlimited runs also have a two-minute worker-silence
-watchdog; active progress resets it. Returned `Up/Down/Left/Right` paths are converted into
-exact walk/push steps by replaying `stepSnapshot()`. The result always reports
-`optimality: "unknown"` because this is a fast first-found portfolio, not an
-optimality proof.
+and retained bidirectional records are added against one run-wide ceiling.
+The cutoff uses current retained/frontier/cache/arena/record memory rather
+than cumulative generated work or a historical heap peak. Peak values remain
+available as diagnostics. Chromium's non-standard process-wide heap sample is
+not multiplied across workers. Unlimited runs also have a two-minute
+worker-silence watchdog; active progress resets it.
 
-The reviewed Grand Hall guardrail uses the same structural settings as the
-production adapter. Base, mirrored, and rotated cases all replay with identical
-`1,010 moves / 316 pushes`, `1,843 visited`, and `13,844 generated` results.
-It is a deterministic kernel guardrail; a separate production Chrome test
-covers the nested-worker and UI path. Run the kernel guardrail explicitly with:
+Once discovery finds a verified route of at least 100 moves, one bounded
+`solution-window-rewrite` worker canonicalizes walking, reorders compatible
+push chains, and searches local bridge windows for fewer total moves. The
+50,000-state budget explicitly reserves 25,000 states for move-cost windows;
+the previous implementation allowed push-window work to consume that entire
+budget first. Runs of at least 90 seconds may perform a second pass. Every
+candidate is replayed again, and a timeout or optional-worker failure returns
+the already verified incumbent. Results report `optimality: "unknown"` because
+this is bounded anytime improvement, not a proof.
+
+The reviewed Grand Hall guardrail uses the same structural and rewrite
+settings as the production adapter. Base, mirrored, and rotated discovery
+cases replay with identical `1,010 moves / 316 pushes`, `1,843 visited`, and
+`13,844 generated` results. The base rewrite is locked at `874 moves /
+304 pushes` with 50,000 visited states. A separate production Chrome test
+covers the nested-worker and UI path. Run the guardrail explicitly with:
 
 ```powershell
 npm.cmd run test:solver:huge
 ```
+
+For corpus measurements, run:
+
+```powershell
+npm.cmd run benchmark:solver
+npm.cmd run benchmark:solver -- --puzzle=huge --rewrite-passes=2
+$env:SOKOMIND_TUNING_JSON='{"topologyWeight":0.8}'
+npm.cmd run benchmark:solver -- --puzzle=master-exchange
+```
+
+The default corpus contains Grand Hall, both typed master originals, Microban
+145/146, and Caleb 022. Multi-puzzle runs launch one child process per case,
+emit JSON Lines, and enforce a per-case timeout so heap/RSS figures are not
+contaminated by prior puzzles. `SokomindTuningProfile` schema v1 exposes only
+soft ordering weights. It cannot change legality, hard pruning, replay
+verification, or resource limits, which keeps future AlphaEvolve experiments
+behind a stable correctness boundary.
 
 ## Contract
 
@@ -92,7 +120,7 @@ A solver receives:
 - immutable `ParsedBoard` geometry;
 - an exact `GameSnapshot`, which permits solving from the initial or current
   game state;
-- an explicit `SolverObjective`;
+- the fixed `{ kind: "moves" }` solver objective marker;
 - optional resource limits and JSON-safe adapter options;
 - an execution context containing an `AbortSignal`, progress callback, and
   monotonic clock.
@@ -159,8 +187,8 @@ built on top of the solver worker infrastructure. It creates a dedicated worker
 lazily on first request and keeps it alive for the duration of the session.
 
 When the player presses H or taps the Hint button (positioned between Undo and
-Restart in `GameControls`), the controller submits an A* search with pushes
-objective, a 5-second time limit, and a 64 MB memory ceiling. If a solution is
+Restart in `GameControls`), the controller submits a move-minimizing A* search
+with a 5-second time limit and a 128 MB memory ceiling. If a solution is
 found, the first three steps are extracted and animated through the existing
 `playSolverSolution` pipeline. The player sees the moves play out on the board
 without the full solver dialog opening.
@@ -176,8 +204,8 @@ that switching puzzles or restarting mid-hint does not apply outdated steps.
   shutdown. Do not claim cooperative cancellation otherwise.
 - Report monotonic, finite, non-negative metrics. Report `fraction` only when a
   meaningful bound exists.
-- Support every objective listed in metadata and reject unsupported objectives
-  before search.
+- Advertise only the move objective and reject obsolete objective payloads at
+  the protocol boundary.
 - Give heuristic ties a deterministic final ordering. If randomness is useful,
   make the seed an explicit option and report it.
 - Use stable box IDs and exact robot positions. In particular, a hard pruning
@@ -194,7 +222,7 @@ that switching puzzles or restarting mid-hint does not apply outdated steps.
 
 Each implementation should have:
 
-1. contract tests for metadata, supported objectives, limits, and cancellation;
+1. contract tests for metadata, the move objective, limits, and cancellation;
 2. legality tests that replay every returned solution through the core;
 3. targeted safety tests for every hard pruning rule;
 4. deterministic fixture tests with fixed outcomes;

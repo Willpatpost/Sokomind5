@@ -89,7 +89,7 @@ export function ProgressDialog({
 
         <p className={styles.explanation}>
           Export a portable backup, or import another backup. Imports merge
-          records and keep the route with the fewest pushes, then moves.
+          records and keep the route with the fewest moves.
         </p>
 
         <div className={styles.actions}>

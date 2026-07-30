@@ -86,7 +86,7 @@ function request(): SolverRequest {
   return {
     board: session.board,
     snapshot: session.snapshot,
-    objective: { kind: "moves", tieBreak: "pushes" },
+    objective: { kind: "moves" },
   };
 }
 
@@ -97,7 +97,7 @@ function solvedResult(): SolverResult {
       steps: [{ direction: "right", kind: "push" }],
       moves: 1,
       pushes: 1,
-      objective: { kind: "moves", tieBreak: "pushes" },
+      objective: { kind: "moves" },
       objectiveScore: 1,
       optimality: "unknown",
     },
@@ -327,7 +327,7 @@ describe("solver worker host and client", () => {
             steps: [{ direction: "up", kind: "walk" }],
             moves: 1,
             pushes: 0,
-            objective: { kind: "moves", tieBreak: "pushes" },
+            objective: { kind: "moves" },
             objectiveScore: 1,
             optimality: "unknown",
           },

@@ -5,7 +5,6 @@ import {
 import type {
   SolutionStep,
   SolverExecutionContext,
-  SolverObjective,
   SolverProgress,
   SolverRequest,
   SolverResult,
@@ -34,7 +33,7 @@ import {
 } from "./priority-queue.ts";
 import { KeeperReachability } from "./reachability.ts";
 
-export type ClassicSearchStrategy = "dfs" | "bfs" | "greedy" | "astar";
+export type ClassicSearchStrategy = "dfs" | "greedy" | "astar";
 
 export interface ClassicSearchConfiguration {
   readonly strategy: ClassicSearchStrategy;
@@ -68,7 +67,6 @@ interface SearchCounters {
   infeasiblePrunes: number;
   reopens: number;
   reachabilityFloods: number;
-  identityFloods: number;
   retainedBytes: number;
   peakFrontier: number;
   maxDepth: number;
@@ -154,77 +152,16 @@ export function stateKey(robot: number, boxSignature: string): string {
   return `${String(robot)}|${boxSignature}`;
 }
 
-/**
- * Keeper cells in the same box-free connected component enable exactly the
- * same future pushes. They are interchangeable only when walking cost is not
- * part of the requested objective.
- */
-function usesReachableRegionIdentity(objective: SolverObjective): boolean {
-  return objective.kind === "pushes" && objective.tieBreak === "none";
+function objectiveScore(moves: number): number {
+  return moves;
 }
 
-function objectiveScore(
-  objective: SolverObjective,
-  moves: number,
-  pushes: number,
-): number {
-  switch (objective.kind) {
-    case "moves":
-      return moves;
-    case "pushes":
-      return pushes;
-    case "combined":
-      return moves * objective.moveWeight + pushes * objective.pushWeight;
-  }
+function objectiveVector(moves: number): readonly number[] {
+  return [moves];
 }
 
-/**
- * The exact lexicographic cost represented by a request. The extra combined
- * fields are deterministic tie-breakers, not part of the declared score.
- */
-function objectiveVector(
-  objective: SolverObjective,
-  moves: number,
-  pushes: number,
-): readonly number[] {
-  switch (objective.kind) {
-    case "moves":
-      return objective.tieBreak === "pushes"
-        ? [moves, pushes]
-        : [moves];
-    case "pushes":
-      return objective.tieBreak === "moves"
-        ? [pushes, moves]
-        : [pushes];
-    case "combined":
-      return [
-        objectiveScore(objective, moves, pushes),
-        pushes,
-        moves,
-      ];
-  }
-}
-
-function heuristicVector(
-  objective: SolverObjective,
-  pushLowerBound: number,
-): readonly number[] {
-  switch (objective.kind) {
-    case "moves":
-      return objective.tieBreak === "pushes"
-        ? [pushLowerBound, pushLowerBound]
-        : [pushLowerBound];
-    case "pushes":
-      return objective.tieBreak === "moves"
-        ? [pushLowerBound, pushLowerBound]
-        : [pushLowerBound];
-    case "combined":
-      return [
-        pushLowerBound * (objective.moveWeight + objective.pushWeight),
-        pushLowerBound,
-        pushLowerBound,
-      ];
-  }
+function heuristicVector(pushLowerBound: number): readonly number[] {
+  return [pushLowerBound];
 }
 
 function addVectors(
@@ -236,13 +173,11 @@ function addVectors(
 
 function nodePriority(
   strategy: ClassicSearchStrategy,
-  objective: SolverObjective,
   moves: number,
-  pushes: number,
   pushLowerBound: number,
 ): readonly number[] {
-  const g = objectiveVector(objective, moves, pushes);
-  const h = heuristicVector(objective, pushLowerBound);
+  const g = objectiveVector(moves);
+  const h = heuristicVector(pushLowerBound);
   if (strategy === "astar") {
     return [...addVectors(g, h), pushLowerBound, ...g];
   }
@@ -371,7 +306,6 @@ function createMetrics(
       infeasiblePrunes: counters.infeasiblePrunes,
       reopens: counters.reopens,
       reachabilityFloods: counters.reachabilityFloods,
-      identityFloods: counters.identityFloods,
       heuristicCalls: heuristicStats.calls,
       heuristicCacheHits: heuristicStats.cacheHits,
       frontierSize,
@@ -460,24 +394,8 @@ function reconstructSolution(
   return steps;
 }
 
-function unsupportedConfiguration(
-  request: SolverRequest,
-  strategy: ClassicSearchStrategy,
-): string | undefined {
-  if (
-    strategy === "bfs" &&
-    !(
-      request.objective.kind === "pushes" &&
-      request.objective.tieBreak === "none"
-    )
-  ) {
-    return "Breadth-first push search supports only pushes with no tie-break.";
-  }
-  return undefined;
-}
-
 /**
- * Shared push-macro engine used by the four classic solver adapters.
+ * Shared push-macro engine used by the classic solver adapters.
  *
  * Every edge is a legal box push preceded by an exact shortest keeper walk.
  * Nodes retain only their parent index and push descriptor; walk segments are
@@ -489,15 +407,6 @@ export async function runClassicSearch(
   configuration: ClassicSearchConfiguration,
 ): Promise<SolverResult> {
   const startedAt = context.now();
-  const unsupported = unsupportedConfiguration(request, configuration.strategy);
-  if (unsupported) {
-    return {
-      status: "unsolved",
-      reason: "unsupported",
-      detail: unsupported,
-      metrics: { elapsedMs: Math.max(0, context.now() - startedAt) },
-    };
-  }
 
   const counters: SearchCounters = {
     expanded: 0,
@@ -507,7 +416,6 @@ export async function runClassicSearch(
     infeasiblePrunes: 0,
     reopens: 0,
     reachabilityFloods: 0,
-    identityFloods: 0,
     retainedBytes: 0,
     peakFrontier: 0,
     maxDepth: 0,
@@ -519,7 +427,6 @@ export async function runClassicSearch(
     const board = compileSearchBoard(request.board);
     const heuristic = new AssignmentHeuristic(board);
     const reachability = new KeeperReachability(board);
-    const identityReachability = new KeeperReachability(board);
     const staticBytes = estimateStaticBytes(board);
     const initialRobot = board.cellAt(
       request.snapshot.robot.row,
@@ -549,18 +456,8 @@ export async function runClassicSearch(
     );
     throwIfSolverCancelled(context.signal);
 
-    const regionIdentity = usesReachableRegionIdentity(request.objective);
     const initialBoxSignature = canonicalBoxSignature(initialBoxes);
-    let initialIdentityRobot = initialRobot;
-    if (regionIdentity) {
-      const initialOccupancy = occupancyFor(board.cellCount, initialBoxes);
-      initialIdentityRobot = identityReachability.flood(
-        initialRobot,
-        initialOccupancy,
-      ).canonicalCell;
-      counters.identityFloods += 1;
-    }
-    const initialKey = stateKey(initialIdentityRobot, initialBoxSignature);
+    const initialKey = stateKey(initialRobot, initialBoxSignature);
     const initialHeuristic = heuristic.evaluate(initialBoxes);
     const initialNode: SearchNode = {
       robot: initialRobot,
@@ -571,11 +468,9 @@ export async function runClassicSearch(
       moves: 0,
       pushes: 0,
       depth: 0,
-      g: objectiveVector(request.objective, 0, 0),
+      g: objectiveVector(0),
       priority: nodePriority(
         configuration.strategy,
-        request.objective,
-        0,
         0,
         initialHeuristic,
       ),
@@ -597,9 +492,7 @@ export async function runClassicSearch(
     const frontier: Frontier =
       configuration.strategy === "dfs"
         ? new StackFrontier()
-        : configuration.strategy === "bfs"
-          ? new QueueFrontier()
-          : {
+        : {
               get size() {
                 return heap?.size ?? 0;
               },
@@ -703,10 +596,7 @@ export async function runClassicSearch(
         objective: request.objective,
         objectiveScore: 0,
         optimality:
-          configuration.strategy === "astar" ||
-          configuration.strategy === "bfs"
-            ? "proven"
-            : "unknown",
+          configuration.strategy === "astar" ? "proven" : "unknown",
       } as const;
       const verification = verifySolverSolution(request, solution);
       if (!verification.valid) {
@@ -729,7 +619,6 @@ export async function runClassicSearch(
 
     // Pre-allocate reusable buffers to avoid per-node allocations in the hot loop.
     const occupancyBuffer = new Uint8Array(board.cellCount);
-    const identityOccupancyBuffer = new Uint8Array(board.cellCount);
     const deadlockOccupancyBuffer = new Int32Array(board.cellCount);
 
     searchLoop: while (frontier.size > 0) {
@@ -791,16 +680,9 @@ export async function runClassicSearch(
           moves: steps.length,
           pushes,
           objective: request.objective,
-          objectiveScore: objectiveScore(
-            request.objective,
-            steps.length,
-            pushes,
-          ),
+          objectiveScore: objectiveScore(steps.length),
           optimality:
-            configuration.strategy === "astar" ||
-            configuration.strategy === "bfs"
-              ? "proven"
-              : "unknown",
+            configuration.strategy === "astar" ? "proven" : "unknown",
         } as const;
         const verification = verifySolverSolution(request, solution);
         if (!verification.valid) {
@@ -892,18 +774,8 @@ export async function runClassicSearch(
           const moves = node.moves + distance + 1;
           const pushes = node.pushes + 1;
           const boxSignature = canonicalBoxSignature(boxes);
-          let identityRobot = box.cell;
-          if (regionIdentity) {
-            fillOccupancy(identityOccupancyBuffer, boxes);
-            const childOccupancy = identityOccupancyBuffer;
-            identityRobot = identityReachability.flood(
-              box.cell,
-              childOccupancy,
-            ).canonicalCell;
-            counters.identityFloods += 1;
-          }
-          const key = stateKey(identityRobot, boxSignature);
-          const g = objectiveVector(request.objective, moves, pushes);
+          const key = stateKey(box.cell, boxSignature);
+          const g = objectiveVector(moves);
 
           if (configuration.strategy === "astar") {
             const bestIndex = bestNodeByKey.get(key);
@@ -951,9 +823,7 @@ export async function runClassicSearch(
             g,
             priority: nodePriority(
               configuration.strategy,
-              request.objective,
               moves,
-              pushes,
               pushLowerBound,
             ),
             estimatedBytes: estimateNodeBytes(boxes.length, key),
@@ -1035,7 +905,6 @@ export async function runClassicSearch(
             infeasiblePrunes: counters.infeasiblePrunes,
             reopens: counters.reopens,
             reachabilityFloods: counters.reachabilityFloods,
-            identityFloods: counters.identityFloods,
             heuristicCalls: 0,
             heuristicCacheHits: 0,
             frontierSize: 0,

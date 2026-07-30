@@ -22,15 +22,15 @@ npm run test:browser
 
 - puzzle parsing and validation;
 - immutable game transitions, undo, and reset;
-- all 32 catalog definitions and metadata corrections;
+- all catalog definitions and metadata corrections;
 - transition-to-feedback classification;
 - canonical action logs, structural-sharing undo, and exact replay;
 - defensive progress, attempt, route, and preference parsing;
 - strict solver payload validation, solution verification, worker
   cancellation, cleanup, and stale-job suppression;
-- deterministic DFS, BFS, Greedy, and A* results, resource limits, progress
+- deterministic DFS, Greedy, A*, and IDA* results, resource limits, progress
   counters, admissible assignment bounds, and safe deadlock pruning;
-- independent step-state oracle comparisons for BFS/A* optimality and
+- independent step-state oracle comparisons for A*/IDA* move optimality and
   exhaustive tiny-board admissibility checks.
 
 Round 2 and 3 additions:
@@ -81,9 +81,11 @@ major-version automated fixes.
 
 ### Solver quality
 
-Record elapsed time, expanded/generated states, moves, pushes, objective,
-solver version, seed, and resource limits. Grand Hall is an important fixture,
-but no single puzzle should determine solver architecture.
+Record elapsed time, expanded/generated states, moves, pushes, solver version,
+seed, retained memory, peak RSS, tuning fingerprint, and resource limits.
+`npm.cmd run benchmark:solver` runs each hard/master case in a fresh process
+and emits JSON Lines suitable for optimizer datasets. Grand Hall is an
+important fixture, but no single puzzle should determine solver architecture.
 
 Optimality tests use a separate step-by-step Dijkstra oracle on compact
 fixtures; they do not reuse push macros, solver state keys, or heuristic code.
@@ -93,7 +95,7 @@ immutable core before it can reach the UI.
 
 ## Required invariants
 
-- All 32 definitions validate and have unique IDs.
+- Every catalog definition validates and has a unique ID.
 - Declared box counts match board rows.
 - Core operations never mutate prior sessions.
 - A blocked move returns the same session.

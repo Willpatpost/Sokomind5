@@ -10,8 +10,6 @@ import {
   createSolverWorkerClient,
   type SolutionStep,
   type SolverMetadata,
-  type SolverObjective,
-  type SolverObjectiveKind,
   type SolverProgress,
   type SolverResult,
   type SolverRunHandle,
@@ -22,7 +20,7 @@ import { phaseLabel, resultSummary } from "./solver-format";
 const MAX_LOG_ENTRIES = 80;
 const PROGRESS_LOG_INTERVAL_MS = 1_000;
 const WORKER_STARTUP_TIMEOUT_MS = 5_000;
-const MAX_SOLVER_MEMORY_BYTES = 384 * 1024 * 1024;
+const MEBIBYTE = 1024 * 1024;
 
 export const TIME_LIMIT_OPTIONS = Object.freeze([
   { value: 5_000, label: "5 seconds" },
@@ -31,6 +29,13 @@ export const TIME_LIMIT_OPTIONS = Object.freeze([
   { value: 60_000, label: "1 minute" },
   { value: 120_000, label: "2 minutes" },
   { value: 0, label: "No time limit" },
+] as const);
+
+export const MEMORY_LIMIT_OPTIONS = Object.freeze([
+  { value: 0, label: "Automatic" },
+  { value: 384, label: "Low memory (384 MiB)" },
+  { value: 768, label: "Desktop (768 MiB)" },
+  { value: 1_536, label: "Large desktop (1.5 GiB)" },
 ] as const);
 
 export interface SolverRunFingerprint {
@@ -75,15 +80,6 @@ function sessionKey(session: GameSession): string {
   return fingerprintKey(fingerprintFor(session));
 }
 
-function isBreadthFirst(metadata: SolverMetadata | undefined): boolean {
-  if (!metadata) return false;
-  return (
-    /\bbfs\b/i.test(metadata.id) ||
-    /breadth[\s-]*first/i.test(metadata.id) ||
-    /breadth[\s-]*first/i.test(metadata.displayName)
-  );
-}
-
 function isAStar(metadata: SolverMetadata): boolean {
   return (
     /(^|-)a-?star($|-)/i.test(metadata.id) ||
@@ -92,15 +88,14 @@ function isAStar(metadata: SolverMetadata): boolean {
   );
 }
 
-function objectiveFor(kind: SolverObjectiveKind): SolverObjective {
-  switch (kind) {
-    case "moves":
-      return { kind: "moves", tieBreak: "pushes" };
-    case "pushes":
-      return { kind: "pushes", tieBreak: "none" };
-    case "combined":
-      return { kind: "combined", moveWeight: 1, pushWeight: 1 };
-  }
+function automaticMemoryLimitBytes(): number {
+  const memoryGb = (
+    navigator as Navigator & { readonly deviceMemory?: number }
+  ).deviceMemory;
+  if (memoryGb === undefined) return 768 * MEBIBYTE;
+  if (memoryGb <= 4) return 384 * MEBIBYTE;
+  if (memoryGb <= 8) return 768 * MEBIBYTE;
+  return 1_536 * MEBIBYTE;
 }
 
 function errorMessage(error: unknown): string {
@@ -132,9 +127,8 @@ export function useSolverController({
   const [workerGeneration, setWorkerGeneration] = useState(0);
   const [solvers, setSolvers] = useState<readonly SolverMetadata[]>([]);
   const [selectedSolverId, setSelectedSolverId] = useState("");
-  const [objectiveKind, setObjectiveKind] =
-    useState<SolverObjectiveKind>("pushes");
   const [timeLimitMs, setTimeLimitMs] = useState(60_000);
+  const [memoryLimitMiB, setMemoryLimitMiB] = useState(0);
   const [uiPhase, setUiPhase] = useState<SolverUiPhase>("loading");
   const [progress, setProgress] = useState<SolverProgress | null>(null);
   const [result, setResult] = useState<SolverResult | null>(null);
@@ -198,18 +192,6 @@ export function useSolverController({
     () => solvers.find(({ id }) => id === selectedSolverId),
     [selectedSolverId, solvers],
   );
-
-  const availableObjectives = useMemo<readonly SolverObjectiveKind[]>(() => {
-    if (!selectedSolver) return [];
-    if (isBreadthFirst(selectedSolver)) return ["pushes"];
-    return selectedSolver.capabilities.objectives;
-  }, [selectedSolver]);
-
-  const effectiveObjectiveKind = availableObjectives.includes(objectiveKind)
-    ? objectiveKind
-    : availableObjectives.includes("pushes")
-      ? "pushes"
-      : (availableObjectives[0] ?? "pushes");
 
   useEffect(() => {
     let active = true;
@@ -376,17 +358,12 @@ export function useSolverController({
       return;
     }
 
-    const supportedObjectives: readonly SolverObjectiveKind[] =
-      isBreadthFirst(metadata)
-      ? ["pushes"]
-      : metadata.capabilities.objectives;
-    const selectedObjective = supportedObjectives.includes(
-      effectiveObjectiveKind,
-    )
-      ? effectiveObjectiveKind
-      : (supportedObjectives[0] ?? "pushes");
     const fingerprint = fingerprintFor(session);
     const token = ++runTokenRef.current;
+    const maxMemoryBytes =
+      memoryLimitMiB > 0
+        ? memoryLimitMiB * MEBIBYTE
+        : automaticMemoryLimitBytes();
 
     setProgress(null);
     setResult(null);
@@ -401,9 +378,7 @@ export function useSolverController({
     startedAtRef.current = performance.now();
     setUiPhase("running");
     setStatusMessage(`${metadata.displayName} search started.`);
-    appendLog(
-      `Starting ${metadata.displayName} with the ${selectedObjective} objective.`,
-    );
+    appendLog(`Starting ${metadata.displayName} to minimize moves.`);
 
     let handle: SolverRunHandle;
     try {
@@ -412,9 +387,9 @@ export function useSolverController({
         {
           board: session.board,
           snapshot: session.snapshot,
-          objective: objectiveFor(selectedObjective),
+          objective: { kind: "moves" },
           limits: {
-            maxMemoryBytes: MAX_SOLVER_MEMORY_BYTES,
+            maxMemoryBytes,
             ...(timeLimitMs > 0 ? { maxElapsedMs: timeLimitMs } : {}),
           },
         },
@@ -509,7 +484,7 @@ export function useSolverController({
     );
   }, [
     appendLog,
-    effectiveObjectiveKind,
+    memoryLimitMiB,
     selectedSolver,
     session,
     timeLimitMs,
@@ -559,11 +534,10 @@ export function useSolverController({
     selectedSolver,
     selectedSolverId,
     setSelectedSolverId,
-    objectiveKind: effectiveObjectiveKind,
-    setObjectiveKind,
-    availableObjectives,
     timeLimitMs,
     setTimeLimitMs,
+    memoryLimitMiB,
+    setMemoryLimitMiB,
     uiPhase,
     running,
     progress,

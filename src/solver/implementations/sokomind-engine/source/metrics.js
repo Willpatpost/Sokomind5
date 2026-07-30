@@ -40,7 +40,10 @@ function createPerformanceMetrics() {
     _startedAt: now(),
     _heapStartBytes: null,
     _heapSource: null,
-    schemaVersion: 3,
+    _engineMemorySampler: null,
+    _engineMemoryPeakBytes: 0,
+    _engineCachePeakEntries: 0,
+    schemaVersion: 4,
     totalMs: 0,
     heapSupported: false,
     heapUsedBytes: null,
@@ -195,8 +198,46 @@ function createPerformanceMetrics() {
   return metrics;
 }
 
+function sampleEngineMemory(metrics) {
+  if (typeof metrics._engineMemorySampler !== "function") return null;
+  let sample = null;
+  try {
+    sample = metrics._engineMemorySampler();
+  } catch (_error) {
+    sample = null;
+  }
+  if (!sample || typeof sample !== "object") return null;
+  const boardBytes = Number.isFinite(sample.boardBytes)
+    ? Math.max(0, Math.round(sample.boardBytes))
+    : 0;
+  const cacheEntries = Number.isFinite(sample.cacheEntries)
+    ? Math.max(0, Math.round(sample.cacheEntries))
+    : 0;
+  const cacheBytes = Number.isFinite(sample.cacheBytes)
+    ? Math.max(0, Math.round(sample.cacheBytes))
+    : 0;
+  const currentBytes = boardBytes + cacheBytes;
+  metrics._engineMemoryPeakBytes = Math.max(
+    metrics._engineMemoryPeakBytes || 0,
+    currentBytes,
+  );
+  metrics._engineCachePeakEntries = Math.max(
+    metrics._engineCachePeakEntries || 0,
+    cacheEntries,
+  );
+  return {
+    boardBytes,
+    cacheEntries,
+    peakCacheEntries: metrics._engineCachePeakEntries,
+    cacheBytes,
+    currentBytes,
+    peakBytes: metrics._engineMemoryPeakBytes,
+  };
+}
+
 function performanceSnapshot(metrics) {
   samplePerformanceMemory(metrics);
+  const engineMemory = sampleEngineMemory(metrics);
   const rounded = {
     ...metrics,
     totalMs: metrics._startedAt === null ? metrics.totalMs : now() - metrics._startedAt,
@@ -204,6 +245,9 @@ function performanceSnapshot(metrics) {
   delete rounded._startedAt;
   delete rounded._heapStartBytes;
   delete rounded._heapSource;
+  delete rounded._engineMemorySampler;
+  delete rounded._engineMemoryPeakBytes;
+  delete rounded._engineCachePeakEntries;
   rounded.memory = {
     supported: metrics.heapSupported,
     source: metrics._heapSource,
@@ -213,6 +257,7 @@ function performanceSnapshot(metrics) {
     samples: metrics.heapSamples,
     gcControlled: false,
   };
+  if (engineMemory) rounded.engineMemory = engineMemory;
   for (const key of ["totalMs", "parseMs", "graphCompileMs", "denseBuildMs",
     "preparedBoardHydrateMs", "signatureMs", "heuristicMs", "commitmentMs",
     "supportDependencyMs", "localRoomMs", "localCorralMs", "doorwayFlowMs",
@@ -266,6 +311,7 @@ const SokomindMetrics = {
   now,
   currentHeapSample,
   samplePerformanceMemory,
+  sampleEngineMemory,
   createPerformanceMetrics,
   performanceSnapshot,
   createOrderingProductivityGate,

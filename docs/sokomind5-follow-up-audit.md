@@ -1,56 +1,38 @@
 # Sokomind5 follow-up audit
 
-This is the deferred issue list gathered while porting Sokomind Solver. The
-solver port does not silently fix unrelated findings below.
+This is the issue list gathered while porting and strengthening Sokomind
+Solver. Resolved items remain documented so their regressions stay visible.
+
+## Resolved in this pass
+
+Push-count, combined, and push tie-break objectives were removed from the
+public contract. A* and IDA* now optimize the same scalar move cost, and search
+state always includes the exact keeper cell. The optimal cache migrated to a
+move-only schema; legacy push and combined records are discarded because they
+cannot prove a minimum move count.
+
+The adapter no longer estimates memory from cumulative generated states or a
+historical heap peak. It now tracks current and peak worker memory separately,
+including retained/frontier states, caches, compact arenas, bidirectional
+records, prepared geometry, and coordinator records. Regression tests cover
+falling live memory and million-state generation without false exhaustion.
+
+The solver dialog saves a proven record only from an empty action log, session
+cloning preserves collection metadata, and lowercase `x` is rejected instead
+of being normalized into a generic goal.
+
+The editor now has readable scroll-contained cells, all 22 legal typed labels,
+accessible drag/keyboard painting, robust Base64URL sharing, and an isolated
+playtest with keyboard, swipe, D-pad, undo, restart, counters, and solved
+feedback.
 
 ## Confirmed defects
-
-### P1: IDA* overstates optimality
-
-`src/solver/search/ida-star.ts` optimizes only its primary scalar contour. It
-ignores objective tie-breaks and can overestimate low-weight combined
-objectives, while `classic-solvers.ts` advertises every objective as optimal
-and the result always says `optimality: "proven"`.
-
-Reproductions from the audit:
-
-- `tiny`, moves then pushes: A* returns 20 moves / 5 pushes; IDA* returns
-  20 / 7.
-- `beginner-detour`, pushes then moves: A* returns 10 pushes / 24 moves; IDA*
-  returns 10 / 26.
-- `tiny`, combined weights 0.1 / 0.1: A* scores 2.5; IDA* scores 2.7.
-
-Replay proves legality, not optimality. The dialog trusts the flag and offers
-to save the result as proven optimal.
 
 ### P2: IDA* memory limits are incomplete
 
 IDA* estimates only its transposition table, ignores geometry, heuristic
 caches, stack, and buffers, and reports zero estimated bytes at completion. A
 one-box solve completed under a declared 128-byte memory ceiling.
-
-### P2: partial-state proofs can be saved as global proofs
-
-The solver dialog can save a solution found from the current mid-game snapshot
-as a globally proven optimum for the initial puzzle. Saving should be allowed
-only when the run fingerprint has an empty action log.
-
-### P2: combined optimal-cache semantics lose objective weights
-
-`src/shared/optimal-cache.ts` stores only the `combined` kind, not its weights,
-and compares routes by coordinatewise dominance. At 1:1 weights, 20 moves /
-5 pushes and 21 / 4 both score 25, but the latter is rejected as non-optimal.
-
-### P2: session cloning drops collection metadata
-
-`PuzzleDefinition.collection` exists, but `clonePuzzle()` in
-`src/core/game-session.ts` omits it. Imported puzzles therefore lose their
-collection name inside a session.
-
-### P3: lowercase `x` is accepted as a generic goal
-
-Puzzle parsing normalizes every lowercase character, including `x`, to an
-uppercase label. The documented generic goal is `S`, and `x` is reserved.
 
 ## Solver and worker risks
 
@@ -66,12 +48,13 @@ uppercase label. The documented generic goal is `S`, and `x` is reserved.
   the outer worker still pays startup cost.
 - Worker-host capability checks enforce target and objective, but not
   labeled-box, generic-box, partial-state, or cancellation flags.
-- Custom editor test mode renders only the board. A custom puzzle cannot open
-  the solver from that flow.
+- The editor playtest is deliberately isolated from saved sessions and the
+  full solver dialog. Solver-testing a custom draft would need an explicit
+  adapter bridge rather than reusing play-page persistence.
 - The bidirectional lane retains every published record until its bounded phase
   ends. Frontier and state budgets cap it, but a compact parent arena would use
   less memory.
-- This is a bounded first-found port, not the complete legacy director.
+- This is a bounded anytime port, not the complete legacy director.
   Checkpoint/landmark bridge coordination would broaden coverage when exact
   forward/reverse meetings are sparse; a persistent exact lane would be needed
   before claiming eventual completeness for every solvable puzzle.
@@ -82,9 +65,13 @@ uppercase label. The documented generic goal is `S`, and `x` is reserved.
   memory-heavier race.
 - Legacy progress is batched, so state-limit termination can observe a small
   reporting overshoot, but over-limit candidates are rejected. Chromium's
-  process-wide heap sample includes unrelated application memory, so the
-  adapter uses conservative per-worker state estimates and also accounts for
-  retained coordinator records.
+  process-wide heap sample includes unrelated application memory. The adapter
+  uses live engine-owned estimates and records the process sample only when it
+  can identify a trustworthy injected isolate source.
+- Hard discovery cases still create substantial allocation churn even when
+  their live retained set is bounded. The isolated corpus benchmark has
+  observed high process RSS on the typed master rooms; reducing successor
+  generation and compacting legacy beam nodes remain performance priorities.
 
 ## Repository and documentation debt
 

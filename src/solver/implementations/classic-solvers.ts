@@ -50,19 +50,7 @@ export const classicDfsSolver = classicSolver("dfs", {
   description:
     "Deterministic push-macro DFS. Finds a legal first solution without an optimality claim.",
   version: "1.0.0",
-  capabilities: capabilities(
-    ["moves", "pushes", "combined"],
-    "first-found",
-  ),
-});
-
-export const classicBfsSolver = classicSolver("bfs", {
-  id: "classic-bfs",
-  displayName: "Breadth-First Search",
-  description:
-    "Exact breadth-first push search, optimal for the pure push objective.",
-  version: "1.0.0",
-  capabilities: capabilities(["pushes"], "optimal"),
+  capabilities: capabilities(["moves"], "first-found"),
 });
 
 export const classicGreedySolver = classicSolver("greedy", {
@@ -71,22 +59,16 @@ export const classicGreedySolver = classicSolver("greedy", {
   description:
     "Assignment-guided deterministic best-first push search for fast first solutions.",
   version: "1.0.0",
-  capabilities: capabilities(
-    ["moves", "pushes", "combined"],
-    "first-found",
-  ),
+  capabilities: capabilities(["moves"], "first-found"),
 });
 
 export const classicAStarSolver = classicSolver("astar", {
   id: "classic-astar",
   displayName: "A* Search",
   description:
-    "Optimal push-macro A* with label-aware reverse-push assignment bounds.",
+    "Move-optimal A* with label-aware reverse-push assignment bounds.",
   version: "1.0.0",
-  capabilities: capabilities(
-    ["moves", "pushes", "combined"],
-    "optimal",
-  ),
+  capabilities: capabilities(["moves"], "optimal"),
 });
 
 export const classicIdaStarSolver: SolverAdapter = Object.freeze({
@@ -94,12 +76,9 @@ export const classicIdaStarSolver: SolverAdapter = Object.freeze({
     id: "classic-ida-star",
     displayName: "IDA* (iterative deepening)",
     description:
-      "Memory-efficient optimal solver using iterative deepening A*.",
+      "Memory-efficient move-optimal solver using iterative deepening A*.",
     version: "1.0.0",
-    capabilities: capabilities(
-      ["moves", "pushes", "combined"],
-      "optimal",
-    ),
+    capabilities: capabilities(["moves"], "optimal"),
   } satisfies SolverMetadata),
   solve(request: SolverRequest, context: SolverExecutionContext) {
     return runIdaStarSearch(request, context);
@@ -108,7 +87,6 @@ export const classicIdaStarSolver: SolverAdapter = Object.freeze({
 
 export const CLASSIC_SOLVERS = Object.freeze([
   classicDfsSolver,
-  classicBfsSolver,
   classicGreedySolver,
   classicAStarSolver,
   classicIdaStarSolver,

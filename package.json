@@ -18,6 +18,7 @@
     "test:browser": "npm run build && node scripts/run-browser-tests.mjs",
     "test:unit": "node --experimental-strip-types --test tests/unit/*.test.ts",
     "test:solver:huge": "node --experimental-strip-types --test tests/performance/sokomind-solver-huge.test.ts",
+    "benchmark:solver": "node --experimental-strip-types scripts/benchmark-sokomind-solver.ts",
     "test:static": "node --test tests/static-build.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

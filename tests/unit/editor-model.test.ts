@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  TYPED_LABELS,
   createInitialState,
   editorReducer,
+  stateToPuzzle,
   validateEditorState,
 } from "../../src/features/editor/editor-model.ts";
+import { validatePuzzle } from "../../src/core/puzzle.ts";
 
 test("initial state creates a 7x7 grid of walls", () => {
   const state = createInitialState();
@@ -105,4 +108,34 @@ test("valid puzzle passes validation", () => {
   const result = validateEditorState(state);
   assert.equal(result.valid, true);
   assert.equal(result.errors.length, 0);
+});
+
+test("offers every legal typed label and excludes reserved symbols", () => {
+  assert.equal(TYPED_LABELS.length, 22);
+  assert.equal(new Set(TYPED_LABELS).size, 22);
+  assert.ok(TYPED_LABELS.includes("A"));
+  assert.ok(TYPED_LABELS.includes("Z"));
+  for (const reserved of ["O", "R", "S", "X"]) {
+    assert.equal(
+      (TYPED_LABELS as readonly string[]).includes(reserved),
+      false,
+    );
+  }
+});
+
+test("supports a matching Z typed box and goal through core validation", () => {
+  let state = createInitialState();
+  state = editorReducer(state, {
+    type: "load",
+    puzzle: {
+      id: "typed-z",
+      title: "Typed Z",
+      difficulty: "beginner",
+      boxes: 1,
+      rows: ["OOOOO", "O R O", "O Z O", "O z O", "OOOOO"],
+    },
+  });
+
+  assert.deepEqual(validateEditorState(state), { valid: true, errors: [] });
+  assert.equal(validatePuzzle(stateToPuzzle(state)).valid, true);
 });

@@ -3,56 +3,74 @@ import test from "node:test";
 
 import {
   isOptimal,
+  normalizeOptimalCache,
   setOptimalRecord,
   type OptimalCache,
   type OptimalRecord,
 } from "../../src/shared/optimal-cache.ts";
 
-const EMPTY_CACHE: OptimalCache = { version: 1, records: {} };
+const EMPTY_CACHE: OptimalCache = { version: 2, records: {} };
 
-test("isOptimal returns false when no record exists", () => {
-  assert.equal(isOptimal(EMPTY_CACHE, "puzzle-1", 10, 5), false);
-});
+test("isOptimal compares only the proven move count", () => {
+  assert.equal(isOptimal(EMPTY_CACHE, "missing", 10), false);
 
-test("isOptimal checks pushes for push-optimal records", () => {
-  const record: OptimalRecord = { moves: 20, pushes: 8, objective: "pushes" };
+  const record: OptimalRecord = { moves: 15, pushes: 10 };
   const cache = setOptimalRecord(EMPTY_CACHE, "p1", record);
-  assert.equal(isOptimal(cache, "p1", 30, 8), true);
-  assert.equal(isOptimal(cache, "p1", 30, 7), true);
-  assert.equal(isOptimal(cache, "p1", 30, 9), false);
+  assert.equal(isOptimal(cache, "p1", 15), true);
+  assert.equal(isOptimal(cache, "p1", 14), true);
+  assert.equal(isOptimal(cache, "p1", 16), false);
 });
 
-test("isOptimal checks moves for move-optimal records", () => {
-  const record: OptimalRecord = { moves: 15, pushes: 10, objective: "moves" };
-  const cache = setOptimalRecord(EMPTY_CACHE, "p1", record);
-  assert.equal(isOptimal(cache, "p1", 15, 99), true);
-  assert.equal(isOptimal(cache, "p1", 14, 99), true);
-  assert.equal(isOptimal(cache, "p1", 16, 5), false);
+test("setOptimalRecord creates, overwrites, and preserves entries", () => {
+  const first: OptimalRecord = { moves: 20, pushes: 10 };
+  const replacement: OptimalRecord = { moves: 18, pushes: 9 };
+  const other: OptimalRecord = { moves: 12, pushes: 4 };
+
+  let cache = setOptimalRecord(EMPTY_CACHE, "p1", first);
+  assert.deepEqual(cache.records["p1"], first);
+  cache = setOptimalRecord(cache, "p1", replacement);
+  cache = setOptimalRecord(cache, "p2", other);
+
+  assert.deepEqual(cache.records["p1"], replacement);
+  assert.deepEqual(cache.records["p2"], other);
+  assert.equal(cache.version, 2);
 });
 
-test("isOptimal checks both for combined-optimal records", () => {
-  const record: OptimalRecord = { moves: 15, pushes: 8, objective: "combined" };
-  const cache = setOptimalRecord(EMPTY_CACHE, "p1", record);
-  assert.equal(isOptimal(cache, "p1", 15, 8), true);
-  assert.equal(isOptimal(cache, "p1", 14, 7), true);
-  assert.equal(isOptimal(cache, "p1", 15, 9), false);
-  assert.equal(isOptimal(cache, "p1", 16, 8), false);
+test("legacy migration keeps only records that prove minimum moves", () => {
+  const migrated = normalizeOptimalCache({
+    version: 1,
+    records: {
+      moveProof: { moves: 15, pushes: 8, objective: "moves" },
+      pushProof: { moves: 20, pushes: 5, objective: "pushes" },
+      combinedProof: { moves: 18, pushes: 6, objective: "combined" },
+      malformed: { moves: -1, pushes: 0, objective: "moves" },
+    },
+  });
+
+  assert.deepEqual(migrated, {
+    version: 2,
+    records: {
+      moveProof: { moves: 15, pushes: 8 },
+    },
+  });
 });
 
-test("setOptimalRecord creates and overwrites entries", () => {
-  const r1: OptimalRecord = { moves: 20, pushes: 10, objective: "pushes" };
-  const r2: OptimalRecord = { moves: 18, pushes: 9, objective: "pushes" };
-  let cache = setOptimalRecord(EMPTY_CACHE, "p1", r1);
-  assert.deepEqual(cache.records["p1"], r1);
-  cache = setOptimalRecord(cache, "p1", r2);
-  assert.deepEqual(cache.records["p1"], r2);
-});
+test("current cache parsing drops malformed records safely", () => {
+  const normalized = normalizeOptimalCache({
+    version: 2,
+    records: {
+      valid: { moves: 11, pushes: 4 },
+      impossible: { moves: 2, pushes: 3 },
+      fractional: { moves: 4.5, pushes: 2 },
+      obsolete: { moves: 8, pushes: 3, objective: "pushes" },
+    },
+  });
 
-test("setOptimalRecord preserves other entries", () => {
-  const r1: OptimalRecord = { moves: 10, pushes: 5, objective: "pushes" };
-  const r2: OptimalRecord = { moves: 20, pushes: 8, objective: "moves" };
-  let cache = setOptimalRecord(EMPTY_CACHE, "p1", r1);
-  cache = setOptimalRecord(cache, "p2", r2);
-  assert.deepEqual(cache.records["p1"], r1);
-  assert.deepEqual(cache.records["p2"], r2);
+  assert.deepEqual(normalized, {
+    version: 2,
+    records: {
+      valid: { moves: 11, pushes: 4 },
+    },
+  });
+  assert.deepEqual(normalizeOptimalCache({ version: 99, records: {} }), EMPTY_CACHE);
 });

@@ -16,9 +16,9 @@ hosting layer with a portable Vite build.
 - Shareable puzzle/replay links and portable progress import/export
 - Installable offline PWA behavior with repository-subpath-safe assets
 - Pure immutable game rules with no React or browser dependencies
-- Default Sokomind Solver with structural macros, guided push search, and
-  compact bidirectional frontiers
-- DFS, BFS, Greedy, A*, and IDA* alternatives behind the same typed adapter
+- Default Sokomind Solver with structural macros, guided push search, compact
+  bidirectional frontiers, and bounded move-count rewriting
+- DFS, Greedy, A*, and IDA* alternatives behind the same typed adapter
   boundary
 - Live solver telemetry, bounded status history, and verified route playback
 - Automated unit, static, browser, accessibility, and Pages deployment checks
@@ -50,6 +50,7 @@ npm run lint
 npm test
 npm run test:browser
 npm run test:solver:huge
+npm run benchmark:solver -- --puzzle=huge
 ```
 
 `npm test` runs domain and preference tests, creates the production build, and
@@ -57,7 +58,10 @@ then verifies that every emitted script, stylesheet, and public asset is safe
 to deploy beneath a GitHub project-page path. `npm run test:browser` adds
 Playwright interaction tests and axe accessibility scans at `/Sokomind3/`.
 The intentionally separate `test:solver:huge` guardrail replay-solves Grand
-Hall in base, mirrored, and rotated orientations.
+Hall in base, mirrored, and rotated orientations and checks the reviewed
+move-count rewrite. `benchmark:solver` emits JSON Lines for the isolated
+hard/master corpus and accepts a versioned heuristic profile through
+`SOKOMIND_TUNING_JSON`.
 
 ## GitHub Pages
 
@@ -141,13 +145,15 @@ with invariant tests. Grand Hall contains 17 boxes.
 ## Current scope
 
 This repository is the static user application and extension architecture.
-`Sokomind Solver` is the default first-found search. It ports the strongest
+`Sokomind Solver` is the default bounded search. It ports the strongest
 legacy typed-box kernel into an isolated nested worker and combines a
 deterministic structural plan lane with guided and bidirectional discovery.
 Every candidate is replayed through the immutable Sokomind5 core before the UI
-can expose it. The reviewed Grand Hall route completes in 1,010 moves and
-316 pushes with identical deterministic counters across three orientations.
+can expose it. Its deterministic Grand Hall discovery route is 1,010 moves /
+316 pushes; the production move-rewrite pass reduces that to 874 moves /
+304 pushes in the Node benchmark. This is a substantial quality gain, not a
+claim of optimality.
 
-The classic family remains available for comparison and optimal searches. See
-the solver integration guide for guarantees and the follow-up audit for known
-optimality issues that should be addressed separately.
+The classic family remains available for comparison and move-optimal searches.
+See the solver integration guide for guarantees, tuning and benchmark details,
+and the follow-up audit for remaining risks.

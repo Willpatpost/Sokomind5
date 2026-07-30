@@ -21,14 +21,10 @@ interface CompletionDialogProps {
 function bestMessage(
   previous: PuzzleRecord | undefined,
   moves: number,
-  pushes: number,
   newBest: boolean,
 ): string {
   if (!newBest) return "Your existing personal best still stands.";
   if (!previous) return "First clear saved as your personal best.";
-  if (pushes < previous.pushes) {
-    return `New personal best — ${previous.pushes - pushes} fewer pushes.`;
-  }
   return `New personal best — ${previous.moves - moves} fewer moves.`;
 }
 
@@ -59,7 +55,7 @@ export function CompletionDialog({
         <p className={styles.eyebrow}>Room cleared</p>
         <h2 id="completion-title">{title}</h2>
         <p className={styles.bestMessage} id="completion-best">
-          {bestMessage(previousBest, moves, pushes, newBest)}
+          {bestMessage(previousBest, moves, newBest)}
         </p>
         {isOptimalSolution ? (
           <p className={styles.optimalNote}>★ Optimal solution</p>

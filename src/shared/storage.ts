@@ -9,13 +9,14 @@ export const STORAGE_KEYS = Object.freeze({
   progress: "sokomind3.progress.v1",
   experience: "sokomind3.experience.v1",
   session: "sokomind3.session.v1",
-  optimal: "sokomind3.optimal.v1",
+  optimal: "sokomind3.optimal.v2",
 });
 
 export const LEGACY_STORAGE_KEYS = Object.freeze({
   progress: "sokomind.progress.v1",
   experience: "sokomind.experience.v1",
   currentPuzzle: "sokomind.current-puzzle.v1",
+  optimal: "sokomind3.optimal.v1",
 });
 
 function browserStorage(): Storage | null {

@@ -14,6 +14,7 @@ import type {
 import {
   createSokomindSolverAdapter,
   reconstructBidirectionalPath,
+  sokomindDiscoveryBeamWidth,
   solutionFromLegacyPath,
   toLegacyState,
   type SokomindEngineWorker,
@@ -51,7 +52,7 @@ function requestFor(
   return Object.freeze({
     board: session.board,
     snapshot: session.snapshot,
-    objective: { kind: "pushes", tieBreak: "none" } as const,
+    objective: { kind: "moves" } as const,
     ...overrides,
   });
 }
@@ -153,7 +154,7 @@ class ScriptedWorker implements SokomindEngineWorker {
 }
 
 describe("Sokomind Solver adapter", () => {
-  it("advertises honest typed, partial-state, and first-found capabilities", () => {
+  it("advertises honest typed, partial-state, and bounded capabilities", () => {
     const metadata = createSokomindSolverAdapter().metadata;
     assert.equal(metadata.id, "sokomind-solver");
     assert.equal(metadata.displayName, "Sokomind Solver");
@@ -161,8 +162,54 @@ describe("Sokomind Solver adapter", () => {
     assert.equal(metadata.capabilities.genericBoxes, true);
     assert.equal(metadata.capabilities.partialState, true);
     assert.equal(metadata.capabilities.cooperativeCancellation, true);
-    assert.equal(metadata.capabilities.quality, "first-found");
+    assert.equal(metadata.capabilities.quality, "bounded");
+    assert.deepEqual(metadata.capabilities.objectives, ["moves"]);
     assert.equal(metadata.capabilities.deterministic, false);
+  });
+
+  it("scales high-branching beam width to the declared memory class", () => {
+    assert.equal(sokomindDiscoveryBeamWidth(2, 20), 320);
+    assert.equal(sokomindDiscoveryBeamWidth(6, 60), 700);
+    assert.equal(
+      sokomindDiscoveryBeamWidth(8, 90, 384 * 1024 * 1024),
+      32,
+    );
+    assert.equal(
+      sokomindDiscoveryBeamWidth(8, 90, 768 * 1024 * 1024),
+      64,
+    );
+    assert.equal(
+      sokomindDiscoveryBeamWidth(8, 90, 1_536 * 1024 * 1024),
+      128,
+    );
+    assert.equal(sokomindDiscoveryBeamWidth(8, 90), 256);
+  });
+
+  it("honors zero-valued resource ceilings before starting a worker", async () => {
+    for (const limits of [
+      { maxElapsedMs: 0 },
+      { maxExpandedStates: 0 },
+      { maxGeneratedStates: 0 },
+      { maxMemoryBytes: 0 },
+    ] as const) {
+      let workersCreated = 0;
+      const adapter = createSokomindSolverAdapter({
+        createWorker: () => {
+          workersCreated += 1;
+          throw new Error("worker should not start");
+        },
+      });
+      const result = await adapter.solve(
+        requestFor(ONE_TYPED_BOX, { limits }),
+        context(),
+      );
+
+      assert.equal(result.status, "unsolved");
+      if (result.status === "unsolved") {
+        assert.equal(result.reason, "limit-reached");
+      }
+      assert.equal(workersCreated, 0);
+    }
   });
 
   it("keeps static rows but takes every dynamic occupant from the exact snapshot", () => {
@@ -233,6 +280,83 @@ describe("Sokomind Solver adapter", () => {
     assert.equal(result.solution.optimality, "unknown");
     assert.equal(result.metrics.expandedStates, 1);
     assert.equal(workers.every(({ terminated }) => terminated), true);
+  });
+
+  it("replay-verifies and returns a shorter bounded rewrite", async () => {
+    const algorithms: unknown[] = [];
+    const phases: string[] = [];
+    const adapter = createSokomindSolverAdapter({
+      hardwareConcurrency: 2,
+      improvementMinimumMoves: 0,
+      improvementMaxVisited: 100,
+      improvementMaxElapsedMs: 1_000,
+      createWorker: () =>
+        new ScriptedWorker((self, command) => {
+          const algorithm = command.payload.algorithm;
+          algorithms.push(algorithm);
+          queueMicrotask(() => {
+            self.emit({
+              type: "done",
+              status: "solved",
+              path:
+                algorithm === "solution-window-rewrite"
+                  ? ["Down"]
+                  : ["Left", "Right", "Down"],
+              visited: 1,
+              generated: 1,
+              retained: 1,
+              frontier: 0,
+            });
+          });
+        }),
+    });
+    const request = requestFor(ONE_TYPED_BOX);
+
+    const result = await adapter.solve(
+      request,
+      context(undefined, ({ phase }) => phases.push(phase)),
+    );
+
+    assert.equal(result.status, "solved");
+    if (result.status !== "solved") return;
+    assert.deepEqual(algorithms, ["ultimate", "solution-window-rewrite"]);
+    assert.equal(result.solution.moves, 1);
+    assert.equal(result.solution.pushes, 1);
+    assert.equal(verifySolverSolution(request, result.solution).valid, true);
+    assert.equal(result.metrics.counters?.initialSolutionMoves, 3);
+    assert.equal(result.metrics.counters?.bestSolutionMoves, 1);
+    assert.equal(result.metrics.counters?.solutionImprovements, 1);
+    assert.ok(phases.includes("improving"));
+  });
+
+  it("passes a validated tuning profile only into soft engine ordering", async () => {
+    let receivedWeight: unknown;
+    const adapter = createSokomindSolverAdapter({
+      hardwareConcurrency: 2,
+      tuning: { heuristicWeight: 2.25, topologyWeight: 1.5 },
+      createWorker: () =>
+        new ScriptedWorker((self, command) => {
+          receivedWeight = command.payload.weight;
+          assert.equal(command.payload.topologyWeight, 1.5);
+          queueMicrotask(() => {
+            self.emit({
+              type: "done",
+              status: "solved",
+              path: ["Down"],
+              visited: 1,
+              generated: 1,
+            });
+          });
+        }),
+    });
+
+    const result = await adapter.solve(
+      requestFor(ONE_TYPED_BOX),
+      context(),
+    );
+
+    assert.equal(result.status, "solved");
+    assert.equal(receivedWeight, 2.25);
   });
 
   it("does not accept a candidate reported at the expanded-state ceiling", async () => {
@@ -426,6 +550,50 @@ describe("Sokomind Solver adapter", () => {
     assert.deepEqual(structuralGeneratedBudgets, [6]);
   });
 
+  it("runs the bidirectional pair only after direct search at the desktop memory class", async () => {
+    const modes: string[] = [];
+    const adapter = createSokomindSolverAdapter({
+      hardwareConcurrency: 3,
+      deviceMemoryGb: 16,
+      createWorker: () =>
+        new ScriptedWorker((self, command) => {
+          modes.push(command.mode);
+          queueMicrotask(() => {
+            if (command.mode === "search") {
+              self.emit({
+                type: "done",
+                status: "exhausted",
+                visited: 1,
+                generated: 1,
+              });
+            } else if (command.mode === "bidir-forward") {
+              self.emit({
+                type: "done",
+                status: "solved",
+                path: ["Down"],
+                visited: 1,
+                generated: 1,
+              });
+            }
+          });
+        }),
+    });
+
+    const result = await adapter.solve(
+      requestFor(ONE_TYPED_BOX, {
+        limits: { maxMemoryBytes: 1_536 * 1024 * 1024 },
+      }),
+      context(),
+    );
+
+    assert.equal(result.status, "solved");
+    assert.deepEqual(modes, [
+      "search",
+      "bidir-forward",
+      "bidir-reverse",
+    ]);
+  });
+
   it("terminates an isolated engine immediately when cancelled", async () => {
     const abort = new AbortController();
     const workers: ScriptedWorker[] = [];
@@ -489,12 +657,220 @@ describe("Sokomind Solver adapter", () => {
     assert.match(result.detail ?? "", /memory/i);
   });
 
+  it("does not treat cumulative generated work as live memory", async () => {
+    const generated = 1_000_000;
+    const adapter = createSokomindSolverAdapter({
+      hardwareConcurrency: 2,
+      createWorker: () =>
+        new ScriptedWorker((self) => {
+          queueMicrotask(() => {
+            self.emit({
+              type: "progress",
+              status: "searching",
+              visited: 1,
+              generated,
+              retained: 1,
+              frontier: 1,
+            });
+            queueMicrotask(() => {
+              self.emit({
+                type: "done",
+                status: "solved",
+                path: ["Down"],
+                visited: 1,
+                generated,
+                retained: 1,
+                frontier: 0,
+              });
+            });
+          });
+        }),
+    });
+
+    const result = await adapter.solve(
+      requestFor(ONE_TYPED_BOX, {
+        limits: { maxMemoryBytes: 64 * 1024 * 1024 },
+      }),
+      context(),
+    );
+
+    assert.equal(result.status, "solved");
+    assert.equal(result.metrics.generatedStates, generated);
+    assert.ok(
+      (result.metrics.counters?.peakEstimatedMemoryBytes ?? Infinity) <
+        64 * 1024 * 1024,
+    );
+  });
+
+  it("uses current isolate heap for cutoffs while retaining its historical peak", async () => {
+    const currentBytes = 20 * 1024 * 1024;
+    const historicalPeakBytes = 512 * 1024 * 1024;
+    const adapter = createSokomindSolverAdapter({
+      hardwareConcurrency: 2,
+      createWorker: () =>
+        new ScriptedWorker((self) => {
+          queueMicrotask(() => {
+            self.emit({
+              type: "done",
+              status: "solved",
+              path: ["Down"],
+              visited: 1,
+              generated: 1,
+              retained: 1,
+              frontier: 0,
+              performance: {
+                heapUsedBytes: currentBytes,
+                heapPeakBytes: historicalPeakBytes,
+                memory: {
+                  source: "injected-runtime",
+                  usedBytes: currentBytes,
+                  peakBytes: historicalPeakBytes,
+                },
+              },
+            });
+          });
+        }),
+    });
+
+    const result = await adapter.solve(
+      requestFor(ONE_TYPED_BOX, {
+        limits: { maxMemoryBytes: 64 * 1024 * 1024 },
+      }),
+      context(),
+    );
+
+    assert.equal(result.status, "solved");
+    assert.equal(
+      result.metrics.counters?.memoryCurrentDirectPortfolioBytes,
+      0,
+    );
+    assert.equal(
+      result.metrics.counters?.memoryPeakDirectPortfolioBytes,
+      historicalPeakBytes,
+    );
+    assert.equal(
+      result.metrics.counters?.peakEstimatedMemoryBytes,
+      historicalPeakBytes,
+    );
+  });
+
+  it("accounts for live engine caches without generated-state inflation", async () => {
+    const cacheBytes = 56 * 1024 * 1024;
+    const adapter = createSokomindSolverAdapter({
+      hardwareConcurrency: 2,
+      createWorker: () =>
+        new ScriptedWorker((self) => {
+          queueMicrotask(() => {
+            self.emit({
+              type: "progress",
+              status: "searching",
+              visited: 1,
+              generated: 1,
+              retained: 1,
+              frontier: 1,
+              performance: {
+                engineMemory: {
+                  boardBytes: 1024,
+                  cacheEntries: 1,
+                  cacheBytes,
+                },
+              },
+            });
+          });
+        }),
+    });
+
+    const result = await adapter.solve(
+      requestFor(ONE_TYPED_BOX, {
+        limits: { maxMemoryBytes: 64 * 1024 * 1024 },
+      }),
+      context(),
+    );
+
+    assert.equal(result.status, "unsolved");
+    if (result.status !== "unsolved") return;
+    assert.equal(result.reason, "limit-reached");
+    assert.match(result.detail ?? "", /memory/i);
+    assert.ok(
+      (result.metrics.counters?.memoryPeakDirectPortfolioBytes ?? 0) >
+        cacheBytes,
+    );
+  });
+
+  it("lets current retained and cache memory fall while preserving the lane peak", async () => {
+    const progressEvents: Parameters<
+      SolverExecutionContext["reportProgress"]
+    >[0][] = [];
+    const adapter = createSokomindSolverAdapter({
+      hardwareConcurrency: 2,
+      createWorker: () =>
+        new ScriptedWorker((self) => {
+          queueMicrotask(() => {
+            self.emit({
+              type: "landmark",
+              visited: 1_000,
+              generated: 10_000,
+              retained: 4_000,
+              frontier: 200,
+              performance: {
+                engineMemory: { cacheBytes: 8 * 1024 * 1024 },
+              },
+            });
+            queueMicrotask(() => {
+              self.emit({
+                type: "landmark",
+                visited: 1_001,
+                generated: 20_000,
+                retained: 10,
+                frontier: 1,
+                performance: {
+                  engineMemory: { cacheBytes: 1024 },
+                },
+              });
+              queueMicrotask(() => {
+                self.emit({
+                  type: "done",
+                  status: "solved",
+                  path: ["Down"],
+                  visited: 1_001,
+                  generated: 20_000,
+                  retained: 10,
+                  frontier: 0,
+                });
+              });
+            });
+          });
+        }),
+    });
+
+    const result = await adapter.solve(
+      requestFor(ONE_TYPED_BOX),
+      context(undefined, (progress) => progressEvents.push(progress)),
+    );
+
+    assert.equal(result.status, "solved");
+    const currentMemory = progressEvents.flatMap(({ counters }) => {
+      const value = counters?.memoryCurrentDirectPortfolioBytes;
+      return value === undefined || value === 0 ? [] : [value];
+    });
+    assert.ok(
+      currentMemory.some(
+        (value, index) =>
+          index > 0 && value < (currentMemory[index - 1] ?? 0),
+      ),
+    );
+    assert.ok(
+      (result.metrics.counters?.memoryPeakDirectPortfolioBytes ?? 0) >
+        (result.metrics.counters?.estimatedMemoryBytes ?? Infinity),
+    );
+  });
+
   it("sums parallel engine memory estimates against the global ceiling", async () => {
     const workers: ScriptedWorker[] = [];
-    const workerMemoryBytes = 100 * 1024 * 1024;
+    const workerMemoryBytes = 800 * 1024 * 1024;
     const adapter = createSokomindSolverAdapter({
       hardwareConcurrency: 4,
-      deviceMemoryGb: 8,
+      deviceMemoryGb: 16,
       createWorker: () => {
         const worker = new ScriptedWorker((self) => {
           queueMicrotask(() => {
@@ -523,7 +899,7 @@ describe("Sokomind Solver adapter", () => {
       },
     });
     const request = requestFor(ONE_TYPED_BOX, {
-      limits: { maxMemoryBytes: 250 * 1024 * 1024 },
+      limits: { maxMemoryBytes: 2 * 1024 * 1024 * 1024 },
     });
 
     const result = await adapter.solve(request, context());
@@ -537,10 +913,10 @@ describe("Sokomind Solver adapter", () => {
   });
 
   it("does not multiply Chromium's process-wide heap sample across workers", async () => {
-    const workerMemoryBytes = 100 * 1024 * 1024;
+    const workerMemoryBytes = 800 * 1024 * 1024;
     const adapter = createSokomindSolverAdapter({
       hardwareConcurrency: 4,
-      deviceMemoryGb: 8,
+      deviceMemoryGb: 16,
       createWorker: () =>
         new ScriptedWorker((self) => {
           queueMicrotask(() => {
@@ -573,12 +949,54 @@ describe("Sokomind Solver adapter", () => {
 
     const result = await adapter.solve(
       requestFor(ONE_TYPED_BOX, {
-        limits: { maxMemoryBytes: 250 * 1024 * 1024 },
+        limits: { maxMemoryBytes: 2 * 1024 * 1024 * 1024 },
       }),
       context(),
     );
 
     assert.equal(result.status, "solved");
+  });
+
+  it("counts Chromium's process-wide heap sample once toward the ceiling", async () => {
+    const workerMemoryBytes = 800 * 1024 * 1024;
+    const adapter = createSokomindSolverAdapter({
+      hardwareConcurrency: 2,
+      createWorker: () =>
+        new ScriptedWorker((self) => {
+          queueMicrotask(() => {
+            self.emit({
+              type: "progress",
+              visited: 0,
+              generated: 0,
+              frontier: 1,
+              performance: {
+                heapUsedBytes: workerMemoryBytes,
+                heapPeakBytes: workerMemoryBytes,
+                memory: { source: "browser-performance-memory" },
+              },
+            });
+          });
+        }),
+    });
+
+    const result = await adapter.solve(
+      requestFor(ONE_TYPED_BOX, {
+        limits: { maxMemoryBytes: 512 * 1024 * 1024 },
+      }),
+      context(),
+    );
+
+    assert.equal(result.status, "unsolved");
+    if (result.status !== "unsolved") return;
+    assert.equal(result.reason, "limit-reached");
+    assert.equal(
+      result.metrics.counters?.peakBrowserProcessMemoryBytes,
+      workerMemoryBytes,
+    );
+    assert.equal(
+      result.metrics.counters?.peakEstimatedMemoryBytes,
+      workerMemoryBytes,
+    );
   });
 
   it("keeps fallback progress and counters monotonic across engines", async () => {

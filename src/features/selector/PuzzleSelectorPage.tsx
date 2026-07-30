@@ -72,18 +72,6 @@ export function PuzzleSelectorPage({ route }: PuzzleSelectorPageProps) {
     }
   }, [route]);
 
-  // Auto-skip single-collection difficulties
-  useEffect(() => {
-    if (route.page !== "puzzles-difficulty") return;
-    const collections = getCollectionsForDifficulty(route.difficulty);
-    if (collections.length === 1) {
-      navigate(
-        puzzleCollectionHash(route.difficulty, collections[0].name),
-        { replace: true },
-      );
-    }
-  }, [route, navigate]);
-
   const findNextUnsolved = useCallback(
     (puzzles: readonly PuzzleDefinition[]) => {
       return puzzles.find((p) => !completedIds.has(p.id))?.id;
@@ -103,7 +91,19 @@ export function PuzzleSelectorPage({ route }: PuzzleSelectorPageProps) {
 
   if (route.page === "puzzles-difficulty") {
     const collections = getCollectionsForDifficulty(route.difficulty);
-    if (collections.length <= 1) return null;
+    if (collections.length === 1) {
+      return (
+        <PuzzleListView
+          difficulty={route.difficulty}
+          collection={collections[0].name}
+          completedIds={completedIds}
+          directDifficultyView
+          optimalCache={optimalCache}
+          progress={progress}
+          navigate={navigate}
+        />
+      );
+    }
     return (
       <CollectionGrid
         difficulty={route.difficulty}
@@ -277,6 +277,7 @@ function PuzzleListView({
   optimalCache,
   progress,
   navigate,
+  directDifficultyView = false,
 }: {
   difficulty: PuzzleDifficulty;
   collection: string;
@@ -284,6 +285,7 @@ function PuzzleListView({
   optimalCache: ReturnType<typeof loadOptimalCache>;
   progress: ReturnType<typeof loadProgress>;
   navigate: (hash: string) => void;
+  directDifficultyView?: boolean;
 }) {
   const [boxFilter, setBoxFilter] = useState<number | null>(null);
   const [completionFilter, setCompletionFilter] = useState<CompletionFilter>("all");
@@ -334,6 +336,9 @@ function PuzzleListView({
     for (let i = 0; i < allPuzzles.length; i++) map.set(allPuzzles[i].id, i);
     return map;
   }, [allPuzzles]);
+  const viewLabel = directDifficultyView
+    ? DIFFICULTY_LABELS[difficulty]
+    : collection;
 
   return (
     <main className={styles.page}>
@@ -341,13 +346,21 @@ function PuzzleListView({
         <div className={styles.topBar}>
           <div className={styles.topBarLeft}>
             <Link
-              href={puzzleDifficultyHash(difficulty)}
+              href={
+                directDifficultyView
+                  ? puzzlesHash()
+                  : puzzleDifficultyHash(difficulty)
+              }
               className={styles.backButton}
-              aria-label="Back to collections"
+              aria-label={
+                directDifficultyView
+                  ? "Back to difficulties"
+                  : "Back to collections"
+              }
             >
               <span aria-hidden="true">&larr;</span>
             </Link>
-            <h1 className={styles.pageTitle}>{collection}</h1>
+            <h1 className={styles.pageTitle}>{viewLabel}</h1>
           </div>
           <ExperienceControls />
         </div>
@@ -355,11 +368,19 @@ function PuzzleListView({
         <nav className={styles.breadcrumb}>
           <Link href={puzzlesHash()}>Puzzles</Link>
           <span>&rsaquo;</span>
-          <Link href={puzzleDifficultyHash(difficulty)}>
-            {DIFFICULTY_LABELS[difficulty]}
-          </Link>
-          <span>&rsaquo;</span>
-          <span className={styles.breadcrumbCurrent}>{collection}</span>
+          {directDifficultyView ? (
+            <span className={styles.breadcrumbCurrent}>
+              {DIFFICULTY_LABELS[difficulty]}
+            </span>
+          ) : (
+            <>
+              <Link href={puzzleDifficultyHash(difficulty)}>
+                {DIFFICULTY_LABELS[difficulty]}
+              </Link>
+              <span>&rsaquo;</span>
+              <span className={styles.breadcrumbCurrent}>{collection}</span>
+            </>
+          )}
         </nav>
 
         {nextUnsolved && (
@@ -368,7 +389,7 @@ function PuzzleListView({
             className={styles.nextButton}
             onClick={() => navigate(playHash(nextUnsolved))}
           >
-            Play next unsolved in {collection}
+            Play next unsolved in {viewLabel}
           </button>
         )}
 
@@ -430,7 +451,7 @@ function PuzzleListView({
               const complete = completedIds.has(puzzle.id);
               const record = progress.completed[puzzle.id];
               const optimal = record
-                ? isOptimal(optimalCache, puzzle.id, record.moves, record.pushes)
+                ? isOptimal(optimalCache, puzzle.id, record.moves)
                 : false;
               const num = (indexMap.get(puzzle.id) ?? 0) + 1;
               return (

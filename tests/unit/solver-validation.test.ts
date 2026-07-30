@@ -36,7 +36,7 @@ function request(): SolverRequest {
   return {
     board: session.board,
     snapshot: session.snapshot,
-    objective: { kind: "moves", tieBreak: "pushes" },
+    objective: { kind: "moves" },
     limits: {
       maxElapsedMs: 10_000,
       maxExpandedStates: 1_000,
@@ -54,7 +54,7 @@ function solution(): SolverSolution {
     steps: [{ direction: "right", kind: "push" }],
     moves: 1,
     pushes: 1,
-    objective: { kind: "moves", tieBreak: "pushes" },
+    objective: { kind: "moves" },
     objectiveScore: 1,
     optimality: "unknown",
   };
@@ -87,11 +87,7 @@ describe("solver runtime validation", () => {
   it("enforces objective, limits, and JSON-safe option invariants", () => {
     const invalidObjective = {
       ...request(),
-      objective: {
-        kind: "combined",
-        moveWeight: 0,
-        pushWeight: 0,
-      },
+      objective: { kind: "pushes" },
     };
     assert.equal(isSolverRequest(invalidObjective), false);
 
@@ -148,12 +144,8 @@ describe("solver runtime validation", () => {
       false,
     );
     assert.equal(
-      scoreSolverObjective(
-        { kind: "combined", moveWeight: 2, pushWeight: 3 },
-        10,
-        4,
-      ),
-      32,
+      scoreSolverObjective({ kind: "moves" }, 10),
+      10,
     );
   });
 

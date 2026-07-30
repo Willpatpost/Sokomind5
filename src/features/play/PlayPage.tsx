@@ -47,7 +47,7 @@ export function PlayPage({ puzzleId, actionLog }: PlayPageProps) {
   const best = progress.completed[puzzle.id];
 
   const currentIsOptimal = best
-    ? isOptimal(game.optimalCache, puzzle.id, best.moves, best.pushes)
+    ? isOptimal(game.optimalCache, puzzle.id, best.moves)
     : false;
 
   return (
@@ -84,7 +84,7 @@ export function PlayPage({ puzzleId, actionLog }: PlayPageProps) {
             type="button"
             onClick={() => void game.handleShare()}
           >
-            <span aria-hidden="true">&nearr;</span>
+            <span aria-hidden="true">{"\u2197"}</span>
             <span className={styles.buttonLabel}>Share</span>
           </button>
           <button
@@ -194,7 +194,7 @@ export function PlayPage({ puzzleId, actionLog }: PlayPageProps) {
 
       <CompletionDialog
         elapsedTime={game.elapsed}
-        isOptimalSolution={isOptimal(game.optimalCache, puzzle.id, session.moves, session.pushes)}
+        isOptimalSolution={isOptimal(game.optimalCache, puzzle.id, session.moves)}
         moves={session.moves}
         newBest={game.completionResult.newBest}
         nextLabel={game.nextPuzzle ? "Next room" : "Browse puzzles"}

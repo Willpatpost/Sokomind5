@@ -114,6 +114,29 @@ test("reports unsupported symbols, robot errors, and per-label mismatches", () =
   });
 });
 
+test("rejects lowercase x instead of treating it as a generic goal", () => {
+  const result = validatePuzzleRows(["OOOOO", "ORXxO", "OOOOO"]);
+
+  assert.equal(result.valid, false);
+  assert.equal(result.errors[0]?.code, "unsupported-symbol");
+  assert.deepEqual(
+    {
+      row: result.errors[0]?.row,
+      column: result.errors[0]?.column,
+    },
+    { row: 1, column: 3 },
+  );
+});
+
+test("preserves imported collection metadata in a game session", () => {
+  const session = createSession({
+    ...puzzle(["OOOOO", "ORXSO", "OOOOO"]),
+    collection: "Microban",
+  });
+
+  assert.equal(session.puzzle.collection, "Microban");
+});
+
 test("validates puzzle metadata and declared box count", () => {
   const result = validatePuzzle({
     id: "",

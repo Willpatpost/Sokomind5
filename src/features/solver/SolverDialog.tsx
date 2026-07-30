@@ -1,9 +1,6 @@
 import { useState } from "react";
 import type { GameSession } from "@/src/core";
-import type {
-  SolutionStep,
-  SolverObjectiveKind,
-} from "@/src/solver";
+import type { SolutionStep } from "@/src/solver";
 import type { OptimalRecord } from "@/src/shared/optimal-cache";
 import { Modal } from "@/src/shared/ui/Modal";
 import {
@@ -11,22 +8,16 @@ import {
   formatCount,
   formatDuration,
   formatRate,
-  objectiveLabel,
   phaseLabel,
   resultSummary,
 } from "./solver-format";
 import {
+  MEMORY_LIMIT_OPTIONS,
   TIME_LIMIT_OPTIONS,
   useSolverController,
   type SolverRunFingerprint,
 } from "./useSolverController";
 import styles from "./SolverDialog.module.css";
-
-const OBJECTIVE_ORDER = [
-  "pushes",
-  "moves",
-  "combined",
-] as const satisfies readonly SolverObjectiveKind[];
 
 export interface SolverDialogProps {
   readonly open: boolean;
@@ -56,6 +47,9 @@ export function SolverDialog({
   const rate = formatRate(solver.expandedStates, elapsedMs);
   const solvedResult =
     solver.result?.status === "solved" ? solver.result : null;
+  const canSaveGlobalOptimal =
+    solvedResult?.solution.optimality === "proven" &&
+    solver.runFingerprint?.actionLog === "";
   const prunedStates =
     (solver.counters?.deadlockPrunes ?? 0) +
     (solver.counters?.infeasiblePrunes ?? 0);
@@ -136,30 +130,6 @@ export function SolverDialog({
                 </label>
 
                 <label>
-                  <span>Objective</span>
-                  <select
-                    disabled={
-                      solver.running ||
-                      solver.availableObjectives.length === 0
-                    }
-                    onChange={(event) =>
-                      solver.setObjectiveKind(
-                        event.currentTarget.value as SolverObjectiveKind,
-                      )
-                    }
-                    value={solver.objectiveKind}
-                  >
-                    {OBJECTIVE_ORDER.filter((kind) =>
-                      solver.availableObjectives.includes(kind),
-                    ).map((kind) => (
-                      <option key={kind} value={kind}>
-                        {objectiveLabel(kind)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
                   <span>Time limit</span>
                   <select
                     disabled={solver.running}
@@ -175,6 +145,23 @@ export function SolverDialog({
                     ))}
                   </select>
                 </label>
+
+                <label>
+                  <span>Memory limit</span>
+                  <select
+                    disabled={solver.running}
+                    onChange={(event) =>
+                      solver.setMemoryLimitMiB(Number(event.currentTarget.value))
+                    }
+                    value={solver.memoryLimitMiB}
+                  >
+                    {MEMORY_LIMIT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               {solver.selectedSolver ? (
@@ -183,11 +170,11 @@ export function SolverDialog({
                 </p>
               ) : null}
 
-              {solver.objectiveKind === "combined" ? (
-                <p className={styles.note}>
-                  Combined gives each move and push equal weight.
-                </p>
-              ) : null}
+              <p className={styles.note}>
+                All searches evaluate routes by total movement. A* and IDA*
+                prove a minimum; the other searches return their best verified
+                route. Pushes remain statistics, not an objective.
+              </p>
 
               <div className={styles.primaryActions}>
                 <button
@@ -341,8 +328,7 @@ export function SolverDialog({
                 <p>{resultSummary(solver.result)}</p>
                 {solvedResult && solver.resultSolver ? (
                   <p className={styles.foundBy}>
-                    Found by {solver.resultSolver.displayName} for{" "}
-                    {objectiveLabel(solvedResult.solution.objective.kind)}.
+                    Found by {solver.resultSolver.displayName}.
                   </p>
                 ) : null}
 
@@ -358,21 +344,18 @@ export function SolverDialog({
                         <dd>{formatCount(solvedResult.solution.pushes)}</dd>
                       </div>
                       <div>
-                        <dt>Score</dt>
-                        <dd>
-                          {formatCount(solvedResult.solution.objectiveScore)}
-                        </dd>
-                      </div>
-                      <div>
                         <dt>Guarantee</dt>
                         <dd>
                           {solvedResult.solution.optimality === "proven"
                             ? "Optimal"
-                            : "First found"}
+                            : solver.resultSolver?.capabilities.quality ===
+                                "bounded"
+                              ? "Best found"
+                              : "First found"}
                         </dd>
                       </div>
                     </dl>
-                    {solvedResult.solution.optimality === "proven" && onSaveOptimal ? (
+                    {canSaveGlobalOptimal && onSaveOptimal ? (
                       <button
                         className={styles.play}
                         disabled={savedOptimal}
@@ -380,7 +363,6 @@ export function SolverDialog({
                           onSaveOptimal(session.puzzle.id, {
                             moves: solvedResult.solution.moves,
                             pushes: solvedResult.solution.pushes,
-                            objective: solvedResult.solution.objective.kind,
                           });
                           setSavedOptimal(true);
                         }}
@@ -388,6 +370,14 @@ export function SolverDialog({
                       >
                         {savedOptimal ? "Optimal saved ★" : "Save as proven optimal"}
                       </button>
+                    ) : null}
+                    {solvedResult.solution.optimality === "proven" &&
+                    !canSaveGlobalOptimal ? (
+                      <p className={styles.note}>
+                        This route is optimal from the current position. Start
+                        from the puzzle&apos;s initial position to save a
+                        global optimal record.
+                      </p>
                     ) : null}
                     <button
                       className={styles.play}

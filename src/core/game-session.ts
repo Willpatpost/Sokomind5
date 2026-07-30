@@ -27,6 +27,9 @@ function clonePuzzle(puzzle: PuzzleDefinition): PuzzleDefinition {
     difficulty: puzzle.difficulty,
     boxes: puzzle.boxes,
     ...(puzzle.hint === undefined ? {} : { hint: puzzle.hint }),
+    ...(puzzle.collection === undefined
+      ? {}
+      : { collection: puzzle.collection }),
     rows: Object.freeze([...puzzle.rows]),
   });
 }

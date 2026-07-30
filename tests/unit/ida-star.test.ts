@@ -97,24 +97,19 @@ function solved(
 
 describe("IDA* search", () => {
   it("solves a trivial one-box puzzle", async () => {
-    const request = requestFor(ONE_BOX, {
-      kind: "pushes",
-      tieBreak: "none",
-    });
+    const request = requestFor(ONE_BOX, { kind: "moves" });
     const result = solved(
       await runIdaStarSearch(request, executionContext()),
     );
 
     assert.equal(result.solution.optimality, "proven");
+    assert.equal(result.solution.moves, 1);
     assert.equal(result.solution.pushes, 1);
     assert.equal(verifySolverSolution(request, result.solution).valid, true);
   });
 
-  it("solves a two-box puzzle push-optimally", async () => {
-    const request = requestFor(TWO_GENERIC_BOXES, {
-      kind: "pushes",
-      tieBreak: "none",
-    });
+  it("solves a two-box puzzle move-optimally", async () => {
+    const request = requestFor(TWO_GENERIC_BOXES, { kind: "moves" });
 
     // Get A* result for comparison
     const astarResult = solved(
@@ -126,48 +121,7 @@ describe("IDA* search", () => {
     );
 
     assert.equal(idaResult.solution.optimality, "proven");
-    assert.equal(idaResult.solution.pushes, astarResult.solution.pushes);
-    assert.equal(
-      verifySolverSolution(request, idaResult.solution).valid,
-      true,
-    );
-  });
-
-  it("produces optimal push counts matching A* for pushes+moves objective", async () => {
-    const request = requestFor(TWO_GENERIC_BOXES, {
-      kind: "pushes",
-      tieBreak: "moves",
-    });
-
-    const astarResult = solved(
-      await classicAStarSolver.solve(request, executionContext()),
-    );
-    const idaResult = solved(
-      await runIdaStarSearch(request, executionContext()),
-    );
-
-    assert.equal(idaResult.solution.pushes, astarResult.solution.pushes);
-    assert.equal(
-      verifySolverSolution(request, idaResult.solution).valid,
-      true,
-    );
-  });
-
-  it("produces optimal move counts matching A* for moves objective", async () => {
-    const request = requestFor(TWO_GENERIC_BOXES, {
-      kind: "moves",
-      tieBreak: "pushes",
-    });
-
-    const astarResult = solved(
-      await classicAStarSolver.solve(request, executionContext()),
-    );
-    const idaResult = solved(
-      await runIdaStarSearch(request, executionContext()),
-    );
-
     assert.equal(idaResult.solution.moves, astarResult.solution.moves);
-    assert.equal(idaResult.solution.pushes, astarResult.solution.pushes);
     assert.equal(
       verifySolverSolution(request, idaResult.solution).valid,
       true,
@@ -184,7 +138,7 @@ describe("IDA* search", () => {
     const request: SolverRequest = {
       board: session.board,
       snapshot: pushed.snapshot,
-      objective: { kind: "pushes", tieBreak: "none" },
+      objective: { kind: "moves" },
     };
     const result = solved(
       await runIdaStarSearch(request, executionContext()),
@@ -197,10 +151,7 @@ describe("IDA* search", () => {
   });
 
   it("respects cancellation via AbortSignal", async () => {
-    const request = requestFor(TWO_GENERIC_BOXES, {
-      kind: "pushes",
-      tieBreak: "none",
-    });
+    const request = requestFor(TWO_GENERIC_BOXES, { kind: "moves" });
 
     const controller = new AbortController();
     // Cancel immediately
@@ -216,10 +167,7 @@ describe("IDA* search", () => {
 
   it("respects maxElapsedMs limit", async () => {
     const request: SolverRequest = {
-      ...requestFor(TWO_GENERIC_BOXES, {
-        kind: "pushes",
-        tieBreak: "none",
-      }),
+      ...requestFor(TWO_GENERIC_BOXES, { kind: "moves" }),
       limits: { maxElapsedMs: 0 },
     };
 
@@ -236,10 +184,7 @@ describe("IDA* search", () => {
   });
 
   it("reports progress during search", async () => {
-    const request = requestFor(TWO_GENERIC_BOXES, {
-      kind: "pushes",
-      tieBreak: "none",
-    });
+    const request = requestFor(TWO_GENERIC_BOXES, { kind: "moves" });
 
     const progressReports: string[] = [];
     const ctx = executionContext((progress) => {
@@ -260,10 +205,7 @@ describe("IDA* search", () => {
   });
 
   it("returns metrics with IDA* iteration count", async () => {
-    const request = requestFor(TWO_GENERIC_BOXES, {
-      kind: "pushes",
-      tieBreak: "none",
-    });
+    const request = requestFor(TWO_GENERIC_BOXES, { kind: "moves" });
     const result = solved(
       await runIdaStarSearch(request, executionContext()),
     );
@@ -285,7 +227,7 @@ describe("IDA* search", () => {
     const request: SolverRequest = {
       board: session.board,
       snapshot: firstPush.snapshot,
-      objective: { kind: "pushes", tieBreak: "none" },
+      objective: { kind: "moves" },
     };
 
     const astarResult = solved(
@@ -295,7 +237,7 @@ describe("IDA* search", () => {
       await runIdaStarSearch(request, executionContext()),
     );
 
-    assert.equal(idaResult.solution.pushes, astarResult.solution.pushes);
+    assert.equal(idaResult.solution.moves, astarResult.solution.moves);
     assert.equal(
       verifySolverSolution(request, idaResult.solution).valid,
       true,

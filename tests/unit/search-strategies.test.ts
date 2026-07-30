@@ -20,7 +20,6 @@ import {
   BUILT_IN_SOLVERS,
   CLASSIC_SOLVERS,
   classicAStarSolver,
-  classicBfsSolver,
   classicDfsSolver,
   classicGreedySolver,
 } from "../../src/solver/implementations/index.ts";
@@ -97,24 +96,10 @@ function stateKey(snapshot: GameSnapshot): string {
 }
 
 function oracleVector(
-  objective: SolverObjective,
+  _objective: SolverObjective,
   moves: number,
-  pushes: number,
 ): readonly number[] {
-  switch (objective.kind) {
-    case "moves":
-      return objective.tieBreak === "pushes"
-        ? [moves, pushes]
-        : [moves];
-    case "pushes":
-      return objective.tieBreak === "moves"
-        ? [pushes, moves]
-        : [pushes];
-    case "combined":
-      return [
-        moves * objective.moveWeight + pushes * objective.pushWeight,
-      ];
-  }
+  return [moves];
 }
 
 /**
@@ -136,7 +121,7 @@ function exactStepOracle(request: SolverRequest): {
   }> = [
     {
       snapshot: request.snapshot,
-      cost: oracleVector(request.objective, 0, 0),
+      cost: oracleVector(request.objective, 0),
       order: nextOrder++,
     },
   ];
@@ -162,7 +147,7 @@ function exactStepOracle(request: SolverRequest): {
       return {
         moves,
         pushes,
-        score: oracleVector(request.objective, moves, pushes)[0] ?? 0,
+        score: oracleVector(request.objective, moves)[0] ?? 0,
       };
     }
     expanded += 1;
@@ -178,11 +163,9 @@ function exactStepOracle(request: SolverRequest): {
       );
       if (!transition.moved) continue;
       const nextMoves = transition.snapshot.moves - startMoves;
-      const nextPushes = transition.snapshot.pushes - startPushes;
       const nextCost = oracleVector(
         request.objective,
         nextMoves,
-        nextPushes,
       );
       const nextKey = stateKey(transition.snapshot);
       const previous = best.get(nextKey);
@@ -205,7 +188,6 @@ describe("classic search strategies", () => {
       CLASSIC_SOLVERS.map(({ metadata }) => metadata.id),
       [
         "classic-dfs",
-        "classic-bfs",
         "classic-greedy",
         "classic-astar",
         "classic-ida-star",
@@ -250,7 +232,6 @@ describe("classic search strategies", () => {
   it("returns replayable first-found solutions from DFS and Greedy", async () => {
     const request = requestFor(TWO_GENERIC_BOXES, {
       kind: "moves",
-      tieBreak: "pushes",
     });
     for (const adapter of [classicDfsSolver, classicGreedySolver]) {
       const result = solved(await solve(adapter, request));
@@ -261,43 +242,15 @@ describe("classic search strategies", () => {
     }
   });
 
-  it("makes BFS push-optimal against an independent step-state oracle", async () => {
-    const request = requestFor(TWO_GENERIC_BOXES, {
-      kind: "pushes",
-      tieBreak: "none",
-    });
+  it("makes A* move-optimal against an independent step-state oracle", async () => {
+    const request = requestFor(TWO_GENERIC_BOXES, { kind: "moves" });
     const expected = exactStepOracle(request);
-    const result = solved(await solve(classicBfsSolver, request));
+    const result = solved(await solve(classicAStarSolver, request));
 
-    assert.equal(result.solution.pushes, expected.pushes);
-    assert.equal(result.solution.objectiveScore, expected.pushes);
+    assert.equal(result.solution.objectiveScore, expected.score);
+    assert.equal(result.solution.moves, expected.moves);
     assert.equal(result.solution.optimality, "proven");
     assert.equal(verifySolverSolution(request, result.solution).valid, true);
-  });
-
-  it("makes A* optimal for moves, lexicographic pushes, and combined cost", async () => {
-    const objectives: readonly SolverObjective[] = [
-      { kind: "moves", tieBreak: "pushes" },
-      { kind: "pushes", tieBreak: "moves" },
-      { kind: "combined", moveWeight: 2, pushWeight: 5 },
-    ];
-
-    for (const objective of objectives) {
-      const request = requestFor(TWO_GENERIC_BOXES, objective);
-      const expected = exactStepOracle(request);
-      const result = solved(await solve(classicAStarSolver, request));
-
-      assert.equal(result.solution.objectiveScore, expected.score);
-      if (
-        objective.kind === "moves" ||
-        (objective.kind === "pushes" && objective.tieBreak === "moves")
-      ) {
-        assert.equal(result.solution.moves, expected.moves);
-      }
-      assert.equal(result.solution.pushes, expected.pushes);
-      assert.equal(result.solution.optimality, "proven");
-      assert.equal(verifySolverSolution(request, result.solution).valid, true);
-    }
   });
 
   it("solves an exact partial snapshot and reports only remaining steps", async () => {
@@ -314,7 +267,7 @@ describe("classic search strategies", () => {
     const request: SolverRequest = {
       board: session.board,
       snapshot: firstPush.snapshot,
-      objective: { kind: "moves", tieBreak: "pushes" },
+      objective: { kind: "moves" },
     };
     const expected = exactStepOracle(request);
     const result = solved(await solve(classicAStarSolver, request));
@@ -327,8 +280,7 @@ describe("classic search strategies", () => {
 
   it("produces identical paths and deterministic counters across runs", async () => {
     const request = requestFor(TWO_GENERIC_BOXES, {
-      kind: "pushes",
-      tieBreak: "moves",
+      kind: "moves",
     });
     const first = solved(await solve(classicAStarSolver, request));
     const second = solved(await solve(classicAStarSolver, request));

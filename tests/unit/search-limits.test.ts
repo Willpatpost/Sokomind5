@@ -14,7 +14,6 @@ import type {
 } from "../../src/solver/contracts.ts";
 import {
   classicAStarSolver,
-  classicBfsSolver,
 } from "../../src/solver/implementations/index.ts";
 
 const ONE_PUSH: PuzzleDefinition = {
@@ -30,7 +29,7 @@ function request(limits?: SolverLimits): SolverRequest {
   return {
     board: session.board,
     snapshot: session.snapshot,
-    objective: { kind: "moves", tieBreak: "pushes" },
+    objective: { kind: "moves" },
     ...(limits === undefined ? {} : { limits }),
   };
 }
@@ -135,7 +134,6 @@ describe("classic search control plane", () => {
       "infeasiblePrunes",
       "reopens",
       "reachabilityFloods",
-      "identityFloods",
       "heuristicCalls",
       "heuristicCacheHits",
       "frontierSize",
@@ -145,22 +143,6 @@ describe("classic search control plane", () => {
       assert.equal(typeof counters?.[key], "number", `missing ${key}`);
       assert.ok((counters?.[key] ?? -1) >= 0, `negative ${key}`);
     }
-  });
-
-  it("rejects BFS objectives for which push-order cannot prove the tie-break", async () => {
-    const session = createSession(ONE_PUSH);
-    const result = await classicBfsSolver.solve(
-      {
-        board: session.board,
-        snapshot: session.snapshot,
-        objective: { kind: "pushes", tieBreak: "moves" },
-      },
-      context(),
-    );
-    assert.equal(result.status, "unsolved");
-    if (result.status !== "unsolved") return;
-    assert.equal(result.reason, "unsupported");
-    assert.match(result.detail ?? "", /no tie-break/i);
   });
 
   it("allows a generated goal to finish at the generated-state ceiling", async () => {

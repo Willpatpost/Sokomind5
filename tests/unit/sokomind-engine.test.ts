@@ -33,7 +33,7 @@ function requestFor(puzzle: PuzzleDefinition): SolverRequest {
   return {
     board: session.board,
     snapshot: session.snapshot,
-    objective: { kind: "pushes", tieBreak: "none" },
+    objective: { kind: "moves" },
   };
 }
 
@@ -99,6 +99,123 @@ describe("vendored Sokomind engine", () => {
       assert.ok(solution);
       assert.equal(verifySolverSolution(request, solution).valid, true);
     } finally {
+      if (originalPostMessage === undefined) {
+        Reflect.deleteProperty(globalThis, "postMessage");
+      } else {
+        globalThis.postMessage = originalPostMessage;
+      }
+    }
+  });
+
+  it("shares one state budget across the ultimate portfolio", () => {
+    const originalPostMessage = globalThis.postMessage;
+    globalThis.postMessage = (() => {}) as typeof globalThis.postMessage;
+    try {
+      const request = requestFor(MIXED_TYPED_PUZZLE);
+      const result = search({
+        algorithm: "ultimate",
+        state: toLegacyState(request),
+        maxVisited: 1,
+        maxGenerated: 1,
+        beamWidth: 32,
+        maxDepth: 80,
+      });
+
+      assert.equal(result.status, "cutoff");
+      assert.ok(Number(result.visited) <= 1);
+      assert.ok(Number(result.generated) <= 1);
+      assert.ok(
+        Number(result.performance?.denseLayoutBuilds ?? 0) <= 1,
+        "the budget must not restart four full portfolio lanes",
+      );
+    } finally {
+      if (originalPostMessage === undefined) {
+        Reflect.deleteProperty(globalThis, "postMessage");
+      } else {
+        globalThis.postMessage = originalPostMessage;
+      }
+    }
+  });
+
+  it("reserves rewrite states for move-specific windows", () => {
+    const originalPostMessage = globalThis.postMessage;
+    globalThis.postMessage = (() => {}) as typeof globalThis.postMessage;
+    try {
+      const request = requestFor(MIXED_TYPED_PUZZLE);
+      const state = toLegacyState(request);
+      const incumbent = search({
+        algorithm: "ultimate",
+        state,
+        maxVisited: 20_000,
+        beamWidth: 160,
+        maxDepth: 80,
+      });
+      assert.ok(Array.isArray(incumbent.path));
+
+      const rewritten = search({
+        algorithm: "solution-window-rewrite",
+        state,
+        solutionPath: incumbent.path,
+        maxVisited: 200,
+        permutationVisited: 0,
+        windowTotalVisited: 0,
+        moveWindowVisited: 200,
+        moveWindowAttempts: 2,
+        perMoveWindowVisited: 100,
+        moveWindowMinimumOverhead: 1,
+      });
+
+      assert.ok(Array.isArray(rewritten.path));
+      assert.ok(Number(rewritten.moveVisited) > 0);
+      const solution = solutionFromLegacyPath(request, rewritten.path);
+      assert.ok(solution);
+      assert.equal(verifySolverSolution(request, solution).valid, true);
+    } finally {
+      if (originalPostMessage === undefined) {
+        Reflect.deleteProperty(globalThis, "postMessage");
+      } else {
+        globalThis.postMessage = originalPostMessage;
+      }
+    }
+  });
+
+  it("reports injectable isolate memory separately from live engine storage", () => {
+    const originalPostMessage = globalThis.postMessage;
+    const memoryRuntime = globalThis as typeof globalThis & {
+      __sokomindMemoryUsage?: () => number;
+    };
+    const originalMemoryUsage = memoryRuntime.__sokomindMemoryUsage;
+    globalThis.postMessage = (() => {}) as typeof globalThis.postMessage;
+    memoryRuntime.__sokomindMemoryUsage = () => 42 * 1024 * 1024;
+    try {
+      const request = requestFor(MIXED_TYPED_PUZZLE);
+      const result = search({
+        algorithm: "analyze-puzzle",
+        state: toLegacyState(request),
+      });
+      const performance = result.performance;
+      const memory = performance?.memory as
+        | Readonly<Record<string, unknown>>
+        | undefined;
+      const engineMemory = performance?.engineMemory as
+        | Readonly<Record<string, unknown>>
+        | undefined;
+
+      assert.equal(performance?.schemaVersion, 4);
+      assert.equal(memory?.source, "injected-runtime");
+      assert.equal(memory?.usedBytes, 42 * 1024 * 1024);
+      assert.ok(
+        ((engineMemory?.boardBytes as number | undefined) ?? 0) > 0,
+      );
+      assert.ok(
+        ((engineMemory?.currentBytes as number | undefined) ?? 0) > 0,
+      );
+    } finally {
+      if (originalMemoryUsage === undefined) {
+        Reflect.deleteProperty(memoryRuntime, "__sokomindMemoryUsage");
+      } else {
+        memoryRuntime.__sokomindMemoryUsage = originalMemoryUsage;
+      }
       if (originalPostMessage === undefined) {
         Reflect.deleteProperty(globalThis, "postMessage");
       } else {

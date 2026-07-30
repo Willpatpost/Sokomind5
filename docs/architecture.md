@@ -115,9 +115,8 @@ classifications are assertions to verify, not replacements for exact replay.
 
 The built-in searches use push-macro edges: each edge is one legal box push
 preceded by an exact shortest keeper walk. DFS and Greedy return the first route
-they find. BFS is restricted to the pure push objective and proves minimum
-pushes. A* supports moves, pushes, and weighted combined cost. Its lower bound
-minimum-matches each label group to matching goals using wall- and
+they find. A* and IDA* minimize total moves. Their lower bound minimum-matches
+each label group to matching goals using wall- and
 support-aware reverse-push distances with all other boxes removed. This is a
 relaxation of the real puzzle, so it never overestimates the remaining cost.
 
@@ -145,11 +144,16 @@ before the direct/bidirectional discovery portfolio, so it neither competes
 with Grand Hall for the browser memory ceiling nor monopolizes an entire
 unsuccessful short run.
 
-For pure push searches, the identity also canonicalizes the keeper's reachable
-component, collapsing positions that enable exactly the same next pushes. The
-true keeper cell remains on every node for legal reconstruction. Move and
-combined objectives keep exact keeper identity because walking distance
-contributes to their cost.
+Every search identity retains the exact keeper cell because walking distance
+contributes to the sole move-count objective.
+
+A verified long route may enter a separate bounded rewrite worker. That lane
+can canonicalize walks, reorder compatible push chains, and search local
+move-cost bridges, but it cannot alter hard pruning or verification. Its
+budget is partitioned so generic push windows cannot starve move-specific
+windows. `sokomind-tuning.ts` similarly exposes only versioned soft ordering
+weights; legality, replay, and resource controls remain outside the future
+AlphaEvolve tuning surface.
 
 ## Deadlock bridge
 
@@ -164,8 +168,8 @@ attribute so the visual layer can highlight them.
 ## Hint system
 
 `src/features/game/use-hint-controller.ts` manages a lazy solver worker that
-runs an A* search with a 5-second time limit, 64 MB memory limit, and pushes
-objective. The worker is created on first request and reused across hints
+runs a move-minimizing A* search with a 5-second time limit and 128 MB memory
+limit. The worker is created on first request and reused across hints
 within a session. When a solution is found, the first three steps are played
 via `playSolverSolution`. The H key and a toolbar button between Undo and
 Restart trigger hint requests. See `solver-integration.md` for worker
@@ -213,7 +217,7 @@ social URLs are injected from `VITE_PUBLIC_SITE_URL`.
 1. Keep the exact post-push keeper position.
 2. Treat deadlock and corral pruning as proof code with positive and negative
    tests.
-3. Make the optimization objective explicit.
+3. Keep total moves as the sole optimization objective.
 4. Give ties a deterministic final key.
 5. Replay every result and verify legality, moves, pushes, and solved state.
 6. Keep speed gates separate from solution-quality gates.

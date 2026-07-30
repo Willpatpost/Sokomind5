@@ -33,6 +33,13 @@ const REVIEWED_DETERMINISTIC_RESULT = Object.freeze({
   peakFrontier: 387,
 });
 
+const REVIEWED_REWRITE_RESULT = Object.freeze({
+  moves: 874,
+  pushes: 304,
+  visited: 50_000,
+  moveVisited: 25_000,
+});
+
 function mirrorRows(rows: readonly string[]): readonly string[] {
   return rows.map((row) => [...row].reverse().join(""));
 }
@@ -48,7 +55,7 @@ function requestFor(puzzle: PuzzleDefinition): SolverRequest {
   return {
     board: session.board,
     snapshot: session.snapshot,
-    objective: { kind: "pushes", tieBreak: "none" },
+    objective: { kind: "moves" },
   };
 }
 
@@ -129,6 +136,48 @@ test("Sokomind Solver replay-solves Grand Hall in three orientations", () => {
         REVIEWED_DETERMINISTIC_RESULT,
         `${name} deterministic result`,
       );
+      if (name === "base") {
+        const rewrite = search({
+          algorithm: "solution-window-rewrite",
+          state: toLegacyState(request),
+          solutionPath: result.path,
+          maxVisited: 50_000,
+          permutationVisited: 10_000,
+          permutationWindowPushes: [8, 16, 32],
+          perPermutationWindowVisited: 1_500,
+          windowPushes: [8, 16, 32],
+          windowVisited: 12_000,
+          windowTotalVisited: 15_000,
+          frontierLimit: 12_000,
+          moveWindowVisited: 25_000,
+          moveWindowPushes: [1, 2, 4],
+          moveWindowAttempts: 12,
+          perMoveWindowVisited: 4_000,
+          moveWindowExtraPushes: 4,
+          moveWindowMinimumOverhead: 6,
+        });
+        assert.ok(Array.isArray(rewrite.path), "base rewrite path");
+        const rewrittenSolution = solutionFromLegacyPath(
+          request,
+          rewrite.path,
+        );
+        assert.ok(rewrittenSolution, "base rewritten solution");
+        assert.equal(
+          verifySolverSolution(request, rewrittenSolution).valid,
+          true,
+          "base rewrite replay",
+        );
+        assert.deepEqual(
+          {
+            moves: rewrittenSolution.moves,
+            pushes: rewrittenSolution.pushes,
+            visited: rewrite.visited,
+            moveVisited: rewrite.moveVisited,
+          },
+          REVIEWED_REWRITE_RESULT,
+          "base deterministic rewrite",
+        );
+      }
       console.info(
         JSON.stringify({
           name,

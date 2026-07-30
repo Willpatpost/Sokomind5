@@ -17,6 +17,11 @@ import type {
 } from "../contracts.ts";
 import { runClassicSearch } from "../search/engine.ts";
 import { scoreSolverObjective } from "../validation.ts";
+import {
+  resolveSokomindTuning,
+  sokomindTuningPayload,
+  type SokomindTuningOverrides,
+} from "./sokomind-tuning.ts";
 
 const LEGACY_DIRECTIONS = Object.freeze({
   Up: "up",
@@ -32,6 +37,13 @@ const LEGACY_DIRECTION_CODES = Object.freeze({
   R: "Right",
 } as const);
 
+const LEGACY_DIRECTION_NAMES = Object.freeze({
+  up: "Up",
+  down: "Down",
+  left: "Left",
+  right: "Right",
+} as const satisfies Readonly<Record<Direction, LegacyDirection>>);
+
 const DIRECTION_VECTORS = Object.freeze([
   Object.freeze({ legacy: "Up", row: -1, column: 0 }),
   Object.freeze({ legacy: "Down", row: 1, column: 0 }),
@@ -46,16 +58,18 @@ const STRUCTURAL_HEAD_START_MS = 25_000;
 const STRUCTURAL_TIME_SHARE = 0.7;
 const STRUCTURAL_STATE_SHARE = 0.6;
 const DEFAULT_MEMORY_ESTIMATE_BYTES = 16 * 1024 * 1024;
-const PREPARED_BOARD_BASE_BYTES = 24 * 1024 * 1024;
-const ESTIMATED_SEARCH_GENERATED_BYTES = 24 * 1024;
-const ESTIMATED_BIDIRECTIONAL_GENERATED_BYTES = 4 * 1024;
-const ESTIMATED_BIDIRECTIONAL_VISITED_BYTES = 256;
-const ESTIMATED_RETAINED_STATE_BYTES = 512;
+const PREPARED_BOARD_BASE_BYTES = 1024 * 1024;
+const ESTIMATED_SEARCH_RETAINED_STATE_BYTES = 1_536;
+const ESTIMATED_BIDIRECTIONAL_RETAINED_STATE_BYTES = 384;
+const ESTIMATED_CACHE_ENTRY_BYTES = 384;
 const ESTIMATED_FRONTIER_STATE_BYTES = 1_024;
 const ESTIMATED_RECORD_BASE_BYTES = 512;
 const BIDIRECTIONAL_CLONE_RESERVE_BYTES = 1024 * 1024;
 const PROGRESS_THROTTLE_MS = 200;
 const WORKER_SILENCE_WATCHDOG_MS = 120_000;
+const DEFAULT_IMPROVEMENT_MAX_VISITED = 50_000;
+const DEFAULT_IMPROVEMENT_MAX_ELAPSED_MS = 45_000;
+const DEFAULT_IMPROVEMENT_MINIMUM_MOVES = 100;
 
 type LegacyDirection = keyof typeof LEGACY_DIRECTIONS;
 type PhaseStopReason =
@@ -145,6 +159,15 @@ export interface SokomindSolverAdapterOptions {
   readonly deviceMemoryGb?: number;
   readonly workerSilenceTimeoutMs?: number;
   readonly structuralHeadStartMs?: number;
+  readonly tuning?: SokomindTuningOverrides;
+  /** Set to zero to disable the bounded post-solution rewrite lane. */
+  readonly improvementMaxVisited?: number;
+  /** Wall-clock budget for the rewrite lane. Set to zero to disable it. */
+  readonly improvementMaxElapsedMs?: number;
+  /** Number of independently replay-verified rewrite passes. */
+  readonly improvementMaxPasses?: number;
+  /** Routes shorter than this are returned immediately. */
+  readonly improvementMinimumMoves?: number;
 }
 
 interface EnginePlan {
@@ -158,7 +181,6 @@ interface EnginePlan {
 interface WorkerTelemetry {
   readonly label: string;
   readonly mode: EngineCommand["mode"];
-  readonly algorithm?: string;
   active: boolean;
   visited: number;
   generated: number;
@@ -166,9 +188,25 @@ interface WorkerTelemetry {
   frontier: number;
   peakFrontier: number;
   retained: number;
+  peakRetained: number;
   publishedRecords: number;
   estimatedMemoryBytes: number;
+  peakEstimatedMemoryBytes: number;
+  processMemoryBytes: number;
+  peakProcessMemoryBytes: number;
+  memoryBreakdown: WorkerMemoryBreakdown;
   performance: Readonly<Record<string, unknown>>;
+}
+
+interface WorkerMemoryBreakdown {
+  readonly runtimeBytes: number;
+  readonly boardBytes: number;
+  readonly retainedBytes: number;
+  readonly frontierBytes: number;
+  readonly cacheBytes: number;
+  readonly arenaBytes: number;
+  readonly recordBytes: number;
+  readonly isolateSampleBytes: number;
 }
 
 interface AggregateSnapshot {
@@ -177,6 +215,7 @@ interface AggregateSnapshot {
   readonly frontierSize: number;
   readonly peakFrontierSize: number;
   readonly estimatedMemoryBytes: number;
+  readonly peakEstimatedMemoryBytes: number;
   readonly counters: Readonly<Record<string, number>>;
 }
 
@@ -199,6 +238,10 @@ interface SearchRunState {
   coordinatorEstimatedMemoryBytes: number;
   preparedBoardEstimatedMemoryBytes: number;
   lastProgressAt: number;
+  progressPhase: "searching" | "improving";
+  initialSolutionMoves: number;
+  bestSolutionMoves: number;
+  solutionImprovements: number;
 }
 
 interface PhaseOutcome {
@@ -230,6 +273,12 @@ function finiteNonNegative(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : 0;
+}
+
+function optionalFiniteNonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function numericProperty(
@@ -366,7 +415,7 @@ export function solutionFromLegacyPath(
     moves,
     pushes,
     objective: request.objective,
-    objectiveScore: scoreSolverObjective(request.objective, moves, pushes),
+    objectiveScore: scoreSolverObjective(request.objective, moves),
     optimality: "unknown",
   });
 }
@@ -533,8 +582,8 @@ function elapsed(run: SearchRunState): number {
 function limitValue(
   limits: SolverLimits | undefined,
   key: keyof SolverLimits,
-): number {
-  return finiteNonNegative(limits?.[key]);
+): number | undefined {
+  return optionalFiniteNonNegative(limits?.[key]);
 }
 
 function valueFromPerformance(
@@ -544,25 +593,100 @@ function valueFromPerformance(
   return numericProperty(performance, key);
 }
 
+function emptyMemoryBreakdown(): WorkerMemoryBreakdown {
+  return Object.freeze({
+    runtimeBytes: DEFAULT_MEMORY_ESTIMATE_BYTES,
+    boardBytes: 0,
+    retainedBytes: 0,
+    frontierBytes: 0,
+    cacheBytes: 0,
+    arenaBytes: 0,
+    recordBytes: 0,
+    isolateSampleBytes: 0,
+  });
+}
+
+function laneCounterStem(id: string): string {
+  return id
+    .split(/[^a-zA-Z0-9]+/u)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join("");
+}
+
 function aggregate(run: SearchRunState): AggregateSnapshot {
   let expandedStates = 0;
   let generatedStates = 0;
   let frontierSize = 0;
+  let retainedStates = 0;
+  let peakRetainedStates = 0;
+  let currentWorkerMemoryBytes = 0;
+  let browserProcessMemoryBytes = 0;
+  let peakBrowserProcessMemoryBytes = 0;
   let currentMemory =
     run.coordinatorEstimatedMemoryBytes +
     run.preparedBoardEstimatedMemoryBytes;
+  let historicalPeakCandidate = currentMemory;
+  const memoryBreakdown = {
+    runtimeBytes: 0,
+    boardBytes: 0,
+    retainedBytes: 0,
+    frontierBytes: 0,
+    cacheBytes: 0,
+    arenaBytes: 0,
+    recordBytes: 0,
+    isolateSampleBytes: 0,
+  };
+  const laneCounters: Record<string, number> = {};
   let heuristicCalls = 0;
   let reachabilityFloods = 0;
   let deadlockPrunes = 0;
   let infeasiblePrunes = 0;
 
-  for (const telemetry of run.workerTelemetry.values()) {
+  for (const [id, telemetry] of run.workerTelemetry) {
     expandedStates += telemetry.visited;
     generatedStates += telemetry.generatedForLimit;
+    peakRetainedStates += telemetry.peakRetained;
+    const stem = laneCounterStem(id);
+    laneCounters[`memoryCurrent${stem}Bytes`] = telemetry.active
+      ? telemetry.estimatedMemoryBytes
+      : 0;
+    laneCounters[`memoryPeak${stem}Bytes`] =
+      telemetry.peakEstimatedMemoryBytes;
+    laneCounters[`memoryCurrent${stem}ProcessBytes`] = telemetry.active
+      ? telemetry.processMemoryBytes
+      : 0;
+    laneCounters[`memoryPeak${stem}ProcessBytes`] =
+      telemetry.peakProcessMemoryBytes;
+    laneCounters[`memory${stem}RetainedStates`] = telemetry.active
+      ? telemetry.retained
+      : 0;
+    laneCounters[`memory${stem}FrontierStates`] = telemetry.active
+      ? telemetry.frontier
+      : 0;
+    laneCounters[`memory${stem}CacheBytes`] = telemetry.active
+      ? telemetry.memoryBreakdown.cacheBytes
+      : 0;
     if (telemetry.active) {
       frontierSize += telemetry.frontier;
+      retainedStates += telemetry.retained;
+      currentWorkerMemoryBytes += telemetry.estimatedMemoryBytes;
       currentMemory += telemetry.estimatedMemoryBytes;
+      historicalPeakCandidate += telemetry.peakEstimatedMemoryBytes;
+      for (const key of Object.keys(
+        memoryBreakdown,
+      ) as (keyof WorkerMemoryBreakdown)[]) {
+        memoryBreakdown[key] += telemetry.memoryBreakdown[key];
+      }
+      browserProcessMemoryBytes = Math.max(
+        browserProcessMemoryBytes,
+        telemetry.processMemoryBytes,
+      );
     }
+    peakBrowserProcessMemoryBytes = Math.max(
+      peakBrowserProcessMemoryBytes,
+      telemetry.peakProcessMemoryBytes,
+    );
     const performance = telemetry.performance;
     heuristicCalls += valueFromPerformance(performance, "heuristicCalls");
     reachabilityFloods += valueFromPerformance(
@@ -578,10 +702,19 @@ function aggregate(run: SearchRunState): AggregateSnapshot {
       valueFromPerformance(performance, "macroPackingRejections") +
       valueFromPerformance(performance, "macroGoalAccessRejections");
   }
+  // Chromium reports a process-wide heap sample from every worker. Count the
+  // largest current sample once: ignoring it makes the declared ceiling
+  // toothless, while summing it once per worker multiplies the same process.
+  currentMemory = Math.max(currentMemory, browserProcessMemoryBytes);
+  historicalPeakCandidate = Math.max(
+    historicalPeakCandidate,
+    peakBrowserProcessMemoryBytes,
+  );
   run.peakFrontierSize = Math.max(run.peakFrontierSize, frontierSize);
   run.peakEstimatedMemoryBytes = Math.max(
     run.peakEstimatedMemoryBytes,
     currentMemory,
+    historicalPeakCandidate,
   );
   return Object.freeze({
     expandedStates,
@@ -589,23 +722,44 @@ function aggregate(run: SearchRunState): AggregateSnapshot {
     frontierSize,
     peakFrontierSize: run.peakFrontierSize,
     estimatedMemoryBytes: currentMemory,
+    peakEstimatedMemoryBytes: run.peakEstimatedMemoryBytes,
     counters: Object.freeze({
       uniqueStates: expandedStates,
       duplicateStates: Math.max(0, generatedStates - expandedStates),
+      retainedStates,
+      peakRetainedStates,
       deadlockPrunes,
       infeasiblePrunes,
       heuristicCalls,
       reachabilityFloods,
-      estimatedMemoryBytes: Math.max(
-        currentMemory,
-        run.peakEstimatedMemoryBytes,
-      ),
+      estimatedMemoryBytes: currentMemory,
+      currentEstimatedMemoryBytes: currentMemory,
+      peakEstimatedMemoryBytes: run.peakEstimatedMemoryBytes,
+      currentWorkerMemoryBytes,
+      currentCoordinatorMemoryBytes:
+        run.coordinatorEstimatedMemoryBytes,
+      currentPreparedBoardMemoryBytes:
+        run.preparedBoardEstimatedMemoryBytes,
+      workerRuntimeMemoryBytes: memoryBreakdown.runtimeBytes,
+      workerBoardMemoryBytes: memoryBreakdown.boardBytes,
+      workerRetainedMemoryBytes: memoryBreakdown.retainedBytes,
+      workerFrontierMemoryBytes: memoryBreakdown.frontierBytes,
+      workerCacheMemoryBytes: memoryBreakdown.cacheBytes,
+      workerArenaMemoryBytes: memoryBreakdown.arenaBytes,
+      workerRecordMemoryBytes: memoryBreakdown.recordBytes,
+      workerIsolateSampleBytes: memoryBreakdown.isolateSampleBytes,
+      browserProcessMemoryBytes,
+      peakBrowserProcessMemoryBytes,
       workersCompleted: run.completedWorkers,
       rejectedCandidates: run.rejectedCandidates,
       phaseTimeouts: run.phaseTimeouts,
       watchdogTimeouts: run.watchdogTimeouts,
       coordinatorRecords: run.coordinatorRecordCount,
       peakCoordinatorRecords: run.peakCoordinatorRecordCount,
+      initialSolutionMoves: run.initialSolutionMoves,
+      bestSolutionMoves: run.bestSolutionMoves,
+      solutionImprovements: run.solutionImprovements,
+      ...laneCounters,
     }),
   });
 }
@@ -631,7 +785,7 @@ function report(
   run.lastProgressAt = now;
   const snapshot = aggregate(run);
   run.context.reportProgress({
-    phase: "searching",
+    phase: run.progressPhase,
     elapsedMs: Math.max(0, now - run.startedAt),
     expandedStates: snapshot.expandedStates,
     generatedStates: snapshot.generatedStates,
@@ -660,15 +814,24 @@ function updateTelemetry(
     telemetry.generated,
     finiteNonNegative(message.generated),
   );
-  telemetry.frontier = finiteNonNegative(message.frontier);
+  const currentFrontier = optionalFiniteNonNegative(message.frontier);
+  if (currentFrontier !== undefined) {
+    telemetry.frontier = currentFrontier;
+  }
   telemetry.peakFrontier = Math.max(
     telemetry.peakFrontier,
     finiteNonNegative(message.peakFrontier),
     telemetry.frontier,
   );
-  telemetry.retained = Math.max(
+  const currentRetained =
+    optionalFiniteNonNegative(message.retained) ??
+    optionalFiniteNonNegative(message.arenaStates);
+  if (currentRetained !== undefined) {
+    telemetry.retained = currentRetained;
+  }
+  telemetry.peakRetained = Math.max(
+    telemetry.peakRetained,
     telemetry.retained,
-    finiteNonNegative(message.retained),
   );
   if (
     typeof message.performance === "object" &&
@@ -687,40 +850,99 @@ function updateTelemetry(
       : valueFromPerformance(telemetry.performance, "pushCandidates"),
   );
   const floorCells = run.request.board.floor.length;
-  const staticBytes =
-    DEFAULT_MEMORY_ESTIMATE_BYTES +
+  const fallbackBoardBytes =
     floorCells * 4 * 1024 +
     floorCells * run.request.board.goals.length * 64;
+  const engineMemory = objectRecord(telemetry.performance.engineMemory);
+  const boardBytes = Math.max(
+    fallbackBoardBytes,
+    finiteNonNegative(engineMemory?.boardBytes),
+  );
+  const cacheEntries = finiteNonNegative(engineMemory?.cacheEntries);
+  const cacheBytes = Math.max(
+    finiteNonNegative(engineMemory?.cacheBytes),
+    cacheEntries * ESTIMATED_CACHE_ENTRY_BYTES,
+  );
+  const arenaBytes =
+    finiteNonNegative(message.compactArenaAllocatedBytes) +
+    finiteNonNegative(message.compactPathBytes);
+  const retainedEntries =
+    telemetry.mode === "search"
+      ? telemetry.retained
+      : Math.max(
+          telemetry.retained,
+          telemetry.visited,
+          telemetry.publishedRecords,
+        );
+  const retainedBytes =
+    telemetry.mode === "search" && arenaBytes === 0
+      ? retainedEntries * ESTIMATED_SEARCH_RETAINED_STATE_BYTES
+      : 0;
+  const recordBytes =
+    telemetry.mode === "search"
+      ? 0
+      : retainedEntries *
+        ESTIMATED_BIDIRECTIONAL_RETAINED_STATE_BYTES;
+  const frontierBytes =
+    telemetry.frontier * ESTIMATED_FRONTIER_STATE_BYTES;
+  const runtimeBytes =
+    DEFAULT_MEMORY_ESTIMATE_BYTES +
+    (telemetry.mode === "search"
+      ? 0
+      : BIDIRECTIONAL_CLONE_RESERVE_BYTES);
+  const fallbackMemory =
+    runtimeBytes +
+    boardBytes +
+    retainedBytes +
+    frontierBytes +
+    cacheBytes +
+    arenaBytes +
+    recordBytes;
   const memoryDetails = objectRecord(telemetry.performance.memory);
   const browserProcessSample =
     memoryDetails?.source === "browser-performance-memory";
-  const reportedMemory = Math.max(
+  const reportedCurrentMemory = Math.max(
     valueFromPerformance(telemetry.performance, "heapUsedBytes"),
-    valueFromPerformance(telemetry.performance, "heapPeakBytes"),
+    finiteNonNegative(memoryDetails?.usedBytes),
   );
-  const generated =
-    telemetry.algorithm === "plan-macro-beam"
-      ? telemetry.generated
-      : Math.max(telemetry.generated, telemetry.generatedForLimit);
-  const fallbackMemory =
-    telemetry.mode === "search"
-      ? staticBytes +
-        generated * ESTIMATED_SEARCH_GENERATED_BYTES +
-        telemetry.retained * ESTIMATED_RETAINED_STATE_BYTES +
-        telemetry.frontier * ESTIMATED_FRONTIER_STATE_BYTES
-      : staticBytes +
-        BIDIRECTIONAL_CLONE_RESERVE_BYTES +
-        generated * ESTIMATED_BIDIRECTIONAL_GENERATED_BYTES +
-        telemetry.visited * ESTIMATED_BIDIRECTIONAL_VISITED_BYTES +
-        telemetry.frontier * ESTIMATED_FRONTIER_STATE_BYTES;
+  const reportedPeakMemory = Math.max(
+    valueFromPerformance(telemetry.performance, "heapPeakBytes"),
+    finiteNonNegative(memoryDetails?.peakBytes),
+  );
   // Chromium's non-standard performance.memory sample includes unrelated
   // page/process allocations and can start above the solver's entire budget.
   // Use deterministic per-worker state estimates there; injected runtimes can
-  // still provide an isolate-scoped absolute sample.
+  // still provide current and peak isolate-scoped absolute samples.
   telemetry.estimatedMemoryBytes =
-    !browserProcessSample && reportedMemory > 0
-      ? reportedMemory
-      : Math.max(DEFAULT_MEMORY_ESTIMATE_BYTES, fallbackMemory);
+    !browserProcessSample && reportedCurrentMemory > 0
+      ? reportedCurrentMemory
+      : fallbackMemory;
+  telemetry.processMemoryBytes = browserProcessSample
+    ? reportedCurrentMemory
+    : 0;
+  telemetry.peakProcessMemoryBytes = Math.max(
+    telemetry.peakProcessMemoryBytes,
+    browserProcessSample ? reportedPeakMemory : 0,
+    telemetry.processMemoryBytes,
+  );
+  telemetry.peakEstimatedMemoryBytes = Math.max(
+    telemetry.peakEstimatedMemoryBytes,
+    telemetry.estimatedMemoryBytes,
+    !browserProcessSample ? reportedPeakMemory : 0,
+  );
+  telemetry.memoryBreakdown = Object.freeze({
+    runtimeBytes,
+    boardBytes,
+    retainedBytes,
+    frontierBytes,
+    cacheBytes,
+    arenaBytes,
+    recordBytes,
+    isolateSampleBytes:
+      !browserProcessSample && reportedCurrentMemory > 0
+        ? reportedCurrentMemory
+        : 0,
+  });
 }
 
 function estimateLegacyRecordBytes(record: LegacyRecord): number {
@@ -766,17 +988,16 @@ function reachedLimit(run: SearchRunState): PhaseStopReason | undefined {
   const snapshot = aggregate(run);
   const limits = run.request.limits;
   const maxExpanded = limitValue(limits, "maxExpandedStates");
-  if (maxExpanded > 0 && snapshot.expandedStates >= maxExpanded) {
+  if (maxExpanded !== undefined && snapshot.expandedStates >= maxExpanded) {
     return "expanded";
   }
   const maxGenerated = limitValue(limits, "maxGeneratedStates");
-  if (maxGenerated > 0 && snapshot.generatedStates >= maxGenerated) {
+  if (maxGenerated !== undefined && snapshot.generatedStates >= maxGenerated) {
     return "generated";
   }
   const maxMemory = limitValue(limits, "maxMemoryBytes");
   if (
-    maxMemory > 0 &&
-    snapshot.estimatedMemoryBytes > 0 &&
+    maxMemory !== undefined &&
     snapshot.estimatedMemoryBytes >= maxMemory
   ) {
     return "memory";
@@ -1067,10 +1288,6 @@ async function runPhase(
         run.workerTelemetry.set(plan.id, {
           label: plan.label,
           mode: plan.mode,
-          algorithm:
-            typeof plan.payload.algorithm === "string"
-              ? plan.payload.algorithm
-              : undefined,
           active: true,
           visited: 0,
           generated: 0,
@@ -1078,8 +1295,13 @@ async function runPhase(
           frontier: 0,
           peakFrontier: 0,
           retained: 0,
+          peakRetained: 0,
           publishedRecords: 0,
           estimatedMemoryBytes: DEFAULT_MEMORY_ESTIMATE_BYTES,
+          peakEstimatedMemoryBytes: DEFAULT_MEMORY_ESTIMATE_BYTES,
+          processMemoryBytes: 0,
+          peakProcessMemoryBytes: 0,
+          memoryBreakdown: emptyMemoryBreakdown(),
           performance: Object.freeze({}),
         });
 
@@ -1224,8 +1446,18 @@ function remainingStateBudget(
   divisor = 1,
 ): number {
   const limit = request.limits?.maxExpandedStates;
-  if (!limit) return fallback;
-  return Math.max(1, Math.min(fallback, Math.floor(limit / divisor)));
+  if (limit === undefined) return fallback;
+  return Math.max(0, Math.min(fallback, Math.floor(limit / divisor)));
+}
+
+function remainingGeneratedBudget(
+  request: SolverRequest,
+  fallback: number,
+  divisor = 1,
+): number {
+  const limit = request.limits?.maxGeneratedStates;
+  if (limit === undefined) return fallback;
+  return Math.max(0, Math.min(fallback, Math.floor(limit / divisor)));
 }
 
 function preparationPlan(state: LegacyState): EnginePlan {
@@ -1244,12 +1476,18 @@ function preparationPlan(state: LegacyState): EnginePlan {
 function structuralPlan(
   state: LegacyState,
   request: SolverRequest,
+  tuning: Readonly<Record<string, number>>,
   budgetDivisor = 1,
 ): EnginePlan {
+  const memoryLimit = request.limits?.maxMemoryBytes ?? Infinity;
   const transpositionLimit =
-    (request.limits?.maxMemoryBytes ?? Infinity) < 256 * 1024 * 1024
+    memoryLimit <= 384 * 1024 * 1024
       ? 24_000
-      : 60_000;
+      : memoryLimit <= 768 * 1024 * 1024
+        ? 36_000
+        : memoryLimit <= 1_536 * 1024 * 1024
+          ? 48_000
+          : 60_000;
   return Object.freeze({
     id: "structural-plan",
     label: "Structural plan search",
@@ -1259,9 +1497,11 @@ function structuralPlan(
       state,
       maxDepth: 460,
       maxVisited: remainingStateBudget(request, 6_000, budgetDivisor),
-      ...(request.limits?.maxGeneratedStates === undefined
-        ? {}
-        : { maxGenerated: request.limits.maxGeneratedStates }),
+      maxGenerated: remainingGeneratedBudget(
+        request,
+        60_000,
+        budgetDivisor,
+      ),
       transpositionLimit,
       planBeamWidth: 32,
       planBoxBranches: 6,
@@ -1272,23 +1512,84 @@ function structuralPlan(
       sequenceMacroResults: 4,
       targetedMacroExplored: 64,
       progressIntervalMs: 1_000,
+      ...tuning,
     }),
   });
+}
+
+export function sokomindDiscoveryBeamWidth(
+  boxCount: number,
+  floorCount: number,
+  maxMemoryBytes = Infinity,
+): number {
+  const moderate = boxCount >= 5 || floorCount >= 45;
+  if (!moderate) return 320;
+  if (maxMemoryBytes <= 384 * 1024 * 1024) {
+    return boxCount >= 8 ? 32 : 128;
+  }
+  if (maxMemoryBytes <= 768 * 1024 * 1024) {
+    return boxCount >= 8 ? 64 : 256;
+  }
+  if (maxMemoryBytes <= 1_536 * 1024 * 1024) {
+    return boxCount >= 8 ? 128 : 384;
+  }
+  return boxCount >= 8 ? 256 : 700;
 }
 
 function discoveryPlans(
   state: LegacyState,
   request: SolverRequest,
   maxWorkers: number,
+  tuning: Readonly<Record<string, number>>,
   budgetDivisor = maxWorkers,
 ): readonly EnginePlan[] {
   const boxes = request.snapshot.boxes.length;
   const moderate = boxes >= 5 || request.board.floor.length >= 45;
+  const memoryLimit = request.limits?.maxMemoryBytes ?? Infinity;
+  const directVisitedFallback = moderate
+    ? memoryLimit <= 384 * 1024 * 1024
+      ? 60_000
+      : memoryLimit <= 768 * 1024 * 1024
+        ? 120_000
+        : 180_000
+    : memoryLimit <= 384 * 1024 * 1024
+      ? 40_000
+      : 80_000;
+  const directGeneratedFallback = moderate
+    ? memoryLimit <= 384 * 1024 * 1024
+      ? 200_000
+      : memoryLimit <= 768 * 1024 * 1024
+        ? 600_000
+        : memoryLimit <= 1_536 * 1024 * 1024
+          ? 900_000
+          : 1_200_000
+    : memoryLimit <= 384 * 1024 * 1024
+      ? 150_000
+      : 300_000;
   const directBudget = remainingStateBudget(
     request,
-    moderate ? 180_000 : 80_000,
+    directVisitedFallback,
     budgetDivisor,
   );
+  const directGeneratedBudget = remainingGeneratedBudget(
+    request,
+    directGeneratedFallback,
+    budgetDivisor,
+  );
+  const beamWidth = sokomindDiscoveryBeamWidth(
+    boxes,
+    request.board.floor.length,
+    request.limits?.maxMemoryBytes,
+  );
+  const transpositionLimit = !moderate
+    ? 30_000
+    : memoryLimit <= 384 * 1024 * 1024
+      ? 24_000
+      : memoryLimit <= 768 * 1024 * 1024
+        ? 36_000
+        : memoryLimit <= 1_536 * 1024 * 1024
+          ? 48_000
+          : 60_000;
   const direct: EnginePlan = Object.freeze({
     id: "direct-portfolio",
     label: "Guided push portfolio",
@@ -1298,23 +1599,37 @@ function discoveryPlans(
       state,
       maxDepth: moderate ? 360 : 180,
       maxVisited: directBudget,
-      transpositionLimit: moderate ? 60_000 : 30_000,
-      beamWidth: moderate ? 700 : 320,
+      maxGenerated: directGeneratedBudget,
+      transpositionLimit,
+      beamWidth,
       sequenceMacros: moderate,
       checkpointLimit: 8,
       progressInterval: 1_000,
       progressIntervalMs: 1_000,
+      ...tuning,
     }),
   });
 
   if (maxWorkers < 3) return Object.freeze([direct]);
+  return Object.freeze([
+    direct,
+    ...bidirectionalPlans(state, request, budgetDivisor),
+  ]);
+}
+
+function bidirectionalPlans(
+  state: LegacyState,
+  request: SolverRequest,
+  budgetDivisor = 2,
+): readonly EnginePlan[] {
+  const boxes = request.snapshot.boxes.length;
+  const moderate = boxes >= 5 || request.board.floor.length >= 45;
   const sideBudget = remainingStateBudget(
     request,
     moderate ? 100_000 : 40_000,
     budgetDivisor,
   );
   return Object.freeze([
-    direct,
     Object.freeze({
       id: "bidirectional-forward",
       label: "Forward bidirectional search",
@@ -1338,6 +1653,199 @@ function discoveryPlans(
       }),
     }),
   ]);
+}
+
+function configuredBudget(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  return Math.floor(finiteNonNegative(value));
+}
+
+function legacyPathFromSolution(
+  solution: SolverSolution,
+): readonly LegacyDirection[] {
+  return Object.freeze(
+    solution.steps.map(({ direction }) => LEGACY_DIRECTION_NAMES[direction]),
+  );
+}
+
+function solutionImprovementPlan(
+  state: LegacyState,
+  incumbent: SolverSolution,
+  maxVisited: number,
+  pass: number,
+): EnginePlan {
+  return Object.freeze({
+    id: `solution-rewrite-${pass}`,
+    label: `Move-count solution rewrite ${pass}`,
+    mode: "search",
+    payload: Object.freeze({
+      algorithm: "solution-window-rewrite",
+      state,
+      solutionPath: legacyPathFromSolution(incumbent),
+      maxVisited,
+      permutationVisited: Math.floor(maxVisited * 0.2),
+      permutationWindowPushes: Object.freeze([8, 16, 32]),
+      perPermutationWindowVisited: 1_500,
+      windowPushes: Object.freeze([8, 16, 32]),
+      windowVisited: 12_000,
+      windowTotalVisited: Math.floor(maxVisited * 0.3),
+      frontierLimit: 12_000,
+      moveWindowVisited: Math.floor(maxVisited * 0.5),
+      moveWindowPushes: Object.freeze([1, 2, 4]),
+      moveWindowAttempts: 12,
+      perMoveWindowVisited: 4_000,
+      moveWindowExtraPushes: 4,
+      moveWindowMinimumOverhead: 6,
+      progressIntervalMs: 1_000,
+    }),
+  });
+}
+
+interface ImprovedIncumbent {
+  readonly solution: SolverSolution;
+  readonly cancelled: boolean;
+}
+
+async function improveIncumbent(
+  run: SearchRunState,
+  state: LegacyState,
+  incumbent: SolverSolution,
+  createWorker: () => SokomindEngineWorker,
+  options: SokomindSolverAdapterOptions,
+): Promise<ImprovedIncumbent> {
+  run.initialSolutionMoves ||= incumbent.moves;
+  run.bestSolutionMoves =
+    run.bestSolutionMoves === 0
+      ? incumbent.moves
+      : Math.min(run.bestSolutionMoves, incumbent.moves);
+
+  const minimumMoves = configuredBudget(
+    options.improvementMinimumMoves,
+    DEFAULT_IMPROVEMENT_MINIMUM_MOVES,
+  );
+  const memoryLimit = run.request.limits?.maxMemoryBytes ?? Infinity;
+  const memoryVisitedCap =
+    memoryLimit <= 384 * 1024 * 1024
+      ? 20_000
+      : memoryLimit <= 768 * 1024 * 1024
+        ? 35_000
+        : DEFAULT_IMPROVEMENT_MAX_VISITED;
+  const configuredVisited = Math.min(
+    configuredBudget(
+      options.improvementMaxVisited,
+      DEFAULT_IMPROVEMENT_MAX_VISITED,
+    ),
+    memoryVisitedCap,
+  );
+  const maxElapsedMs = configuredBudget(
+    options.improvementMaxElapsedMs,
+    DEFAULT_IMPROVEMENT_MAX_ELAPSED_MS,
+  );
+  const requestedElapsedMs = run.request.limits?.maxElapsedMs;
+  const defaultPasses =
+    requestedElapsedMs !== undefined && requestedElapsedMs >= 90_000 ? 2 : 1;
+  const maxPasses = configuredBudget(
+    options.improvementMaxPasses,
+    defaultPasses,
+  );
+  if (
+    incumbent.moves < minimumMoves ||
+    configuredVisited === 0 ||
+    maxElapsedMs === 0 ||
+    maxPasses === 0
+  ) {
+    return Object.freeze({ solution: incumbent, cancelled: false });
+  }
+
+  run.progressPhase = "improving";
+  const snapshot = aggregate(run);
+  run.context.reportProgress({
+    phase: "improving",
+    elapsedMs: elapsed(run),
+    expandedStates: snapshot.expandedStates,
+    generatedStates: snapshot.generatedStates,
+    frontierSize: snapshot.frontierSize,
+    counters: snapshot.counters,
+    incumbent: {
+      moves: incumbent.moves,
+      pushes: incumbent.pushes,
+      objectiveScore: incumbent.objectiveScore,
+    },
+    detail: `Rewriting the ${incumbent.moves}-move route within a bounded local-search budget.`,
+  });
+
+  let best = incumbent;
+  for (let pass = 1; pass <= maxPasses; pass += 1) {
+    const remainingRequest = withRemainingLimits(run);
+    if (!remainingRequest) break;
+    const maxVisited = Math.min(
+      configuredVisited,
+      remainingRequest.limits?.maxExpandedStates ?? Infinity,
+      remainingRequest.limits?.maxGeneratedStates ?? Infinity,
+    );
+    if (maxVisited < 1) break;
+
+    try {
+      const outcome = await runPhase(
+        run,
+        [
+          solutionImprovementPlan(
+            state,
+            best,
+            Math.floor(maxVisited),
+            pass,
+          ),
+        ],
+        createWorker,
+        1,
+        maxElapsedMs,
+      );
+      if (
+        outcome.stopReason === "cancelled" ||
+        run.context.signal.aborted
+      ) {
+        return Object.freeze({ solution: best, cancelled: true });
+      }
+      const candidate = outcome.solution;
+      if (!candidate || candidate.moves >= best.moves) break;
+      best = candidate;
+      run.solutionImprovements += 1;
+      run.bestSolutionMoves = candidate.moves;
+      if (outcome.phaseTimedOut || outcome.stopReason) break;
+    } catch {
+      // Improvement is opportunistic. A verified incumbent must survive an
+      // optional worker failure or unsupported nested-worker environment.
+      break;
+    }
+  }
+  return Object.freeze({ solution: best, cancelled: false });
+}
+
+async function solvedWithImprovement(
+  run: SearchRunState,
+  state: LegacyState,
+  incumbent: SolverSolution,
+  createWorker: () => SokomindEngineWorker,
+  options: SokomindSolverAdapterOptions,
+): Promise<SolverResult> {
+  const improved = await improveIncumbent(
+    run,
+    state,
+    incumbent,
+    createWorker,
+    options,
+  );
+  if (improved.cancelled) {
+    return Object.freeze({ status: "cancelled", metrics: metrics(run) });
+  }
+  return Object.freeze({
+    status: "solved",
+    solution: improved.solution,
+    metrics: metrics(run),
+  });
 }
 
 function isStructuralPuzzle(request: SolverRequest): boolean {
@@ -1366,11 +1874,13 @@ function configuredWorkerCount(
         readonly deviceMemory?: number;
       }
     )?.deviceMemory;
+  const declaredMemoryBytes = request.limits?.maxMemoryBytes ?? Infinity;
   const memoryBound =
-    (request.limits?.maxMemoryBytes ?? Infinity) < 192 * 1024 * 1024 ||
-    (memoryGb !== undefined && memoryGb < 4)
+    declaredMemoryBytes <= 768 * 1024 * 1024 ||
+    (memoryGb !== undefined && memoryGb <= 4)
       ? 1
-      : memoryGb !== undefined && memoryGb < 8
+      : declaredMemoryBytes <= 1_536 * 1024 * 1024 ||
+          (memoryGb !== undefined && memoryGb <= 8)
         ? 2
         : DEFAULT_MAX_ENGINE_WORKERS;
   return Math.max(
@@ -1621,13 +2131,13 @@ export const sokomindSolverMetadata: SolverMetadata = Object.freeze({
   id: "sokomind-solver",
   displayName: "Sokomind Solver",
   description:
-    "Typed-box Sokoban search combining structural macros, guided push search, and compact bidirectional frontiers.",
-  version: "1.0.0",
+    "Typed-box Sokoban search with structural macros, compact bidirectional frontiers, and bounded move-count improvement.",
+  version: "1.1.0",
   capabilities: Object.freeze({
     executionTargets: ["web-worker"] as const,
     runtime: "javascript",
-    objectives: ["moves", "pushes", "combined"] as const,
-    quality: "first-found",
+    objectives: ["moves"] as const,
+    quality: "bounded",
     labeledBoxes: true,
     genericBoxes: true,
     partialState: true,
@@ -1642,6 +2152,9 @@ export function createSokomindSolverAdapter(
   options: SokomindSolverAdapterOptions = {},
 ): SolverAdapter {
   const createWorker = options.createWorker ?? defaultCreateWorker;
+  const tuning = sokomindTuningPayload(
+    resolveSokomindTuning(options.tuning),
+  );
   return Object.freeze({
     metadata: sokomindSolverMetadata,
     async solve(
@@ -1674,6 +2187,10 @@ export function createSokomindSolverAdapter(
         coordinatorEstimatedMemoryBytes: 0,
         preparedBoardEstimatedMemoryBytes: 0,
         lastProgressAt: -Infinity,
+        progressPhase: "searching",
+        initialSolutionMoves: 0,
+        bestSolutionMoves: 0,
+        solutionImprovements: 0,
       };
 
       if (context.signal.aborted) {
@@ -1731,7 +2248,7 @@ export function createSokomindSolverAdapter(
           if (structuralRequest) {
             const outcome = await runPhase(
               run,
-              [structuralPlan(state, structuralRequest)],
+              [structuralPlan(state, structuralRequest, tuning)],
               createWorker,
               1,
               structuralHeadStartMs(run),
@@ -1741,11 +2258,13 @@ export function createSokomindSolverAdapter(
             cutoff ||= outcome.cutoff || Boolean(outcome.phaseTimedOut);
             errors = [...errors, ...outcome.errors];
             if (outcome.solution) {
-              return Object.freeze({
-                status: "solved",
-                solution: outcome.solution,
-                metrics: metrics(run),
-              });
+              return solvedWithImprovement(
+                run,
+                state,
+                outcome.solution,
+                createWorker,
+                options,
+              );
             }
             if (outcome.stopReason) stopReason = outcome.stopReason;
           }
@@ -1783,6 +2302,7 @@ export function createSokomindSolverAdapter(
               state,
               discoveryRequest,
               discoveryWorkers,
+              tuning,
               discoveryPlanCount,
             ),
             createWorker,
@@ -1793,11 +2313,47 @@ export function createSokomindSolverAdapter(
           cutoff ||= outcome.cutoff;
           errors = [...errors, ...outcome.errors];
           if (outcome.solution) {
-            return Object.freeze({
-              status: "solved",
-              solution: outcome.solution,
-              metrics: metrics(run),
-            });
+            return solvedWithImprovement(
+              run,
+              state,
+              outcome.solution,
+              createWorker,
+              options,
+            );
+          }
+          if (outcome.stopReason) stopReason = outcome.stopReason;
+        }
+      }
+
+      if (!stopReason && maxWorkers === 2) {
+        const bidirectionalRequest = withRemainingLimits(run);
+        const remainingLaneBudget = Math.min(
+          bidirectionalRequest?.limits?.maxExpandedStates ?? Infinity,
+          bidirectionalRequest?.limits?.maxGeneratedStates ?? Infinity,
+        );
+        if (
+          bidirectionalRequest &&
+          (!Number.isFinite(remainingLaneBudget) ||
+            remainingLaneBudget >= 2)
+        ) {
+          const outcome = await runPhase(
+            run,
+            bidirectionalPlans(state, bidirectionalRequest, 2),
+            createWorker,
+            2,
+          );
+          engineWorkersStarted += outcome.startedWorkers;
+          engineWorkersFailed += outcome.failedWorkers;
+          cutoff ||= outcome.cutoff;
+          errors = [...errors, ...outcome.errors];
+          if (outcome.solution) {
+            return solvedWithImprovement(
+              run,
+              state,
+              outcome.solution,
+              createWorker,
+              options,
+            );
           }
           if (outcome.stopReason) stopReason = outcome.stopReason;
         }

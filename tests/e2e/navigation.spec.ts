@@ -17,9 +17,28 @@ test("drill-down from home to puzzles to play", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Choose a difficulty" })).toBeVisible();
 
   await page.getByText("Tutorial").click();
-  await expect(page.getByRole("heading", { name: "First Steps" }).or(
-    page.getByText("First Steps")
-  ).first()).toBeVisible({ timeout: 5000 });
+  await expect(page).toHaveURL(/#\/puzzles\/tutorial$/);
+  await expect(page.getByRole("heading", { name: "Tutorial" })).toBeVisible();
+  await expect(page.getByText("First Steps")).toBeVisible();
+
+  await page.getByText("First Steps").click();
+  await expect(page.getByRole("heading", { name: "First Steps" })).toBeVisible();
+});
+
+test("single-collection Tutorial keeps a usable difficulty back link", async ({
+  page,
+}) => {
+  await page.goto("./#/puzzles/tutorial");
+
+  await expect(page).toHaveURL(/#\/puzzles\/tutorial$/);
+  await expect(page.getByRole("heading", { name: "Tutorial" })).toBeVisible();
+  const breadcrumb = page.getByRole("navigation");
+  await expect(breadcrumb).toHaveText(/Puzzles\s*›\s*Tutorial/);
+  await expect(breadcrumb.getByRole("link")).toHaveCount(1);
+
+  await page.getByRole("link", { name: "Back to difficulties" }).click();
+  await expect(page).toHaveURL(/#\/puzzles$/);
+  await expect(page.getByRole("heading", { name: "Choose a difficulty" })).toBeVisible();
 });
 
 test("legacy puzzle URL redirects to play page", async ({ page }) => {
@@ -45,4 +64,17 @@ test("back button from play page navigates to puzzles", async ({ page }) => {
 
   await page.getByRole("link", { name: "Back to puzzles" }).click();
   await expect(page.getByRole("heading", { name: "Choose a difficulty" })).toBeVisible();
+});
+
+test("share control renders an outbound arrow instead of entity text", async ({
+  page,
+}) => {
+  await page.goto("./#/play/ultra-tiny");
+
+  const share = page.getByRole("button", {
+    name: "Share this puzzle and route",
+  });
+  await expect(share).toContainText("↗");
+  await expect(share).toContainText("Share");
+  await expect(share).not.toContainText("&nearr;");
 });

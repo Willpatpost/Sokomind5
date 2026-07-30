@@ -18,26 +18,15 @@ export type SolverOptionValue =
 
 export type SolverOptions = Readonly<Record<string, SolverOptionValue>>;
 
-export type SolverObjectiveKind = "moves" | "pushes" | "combined";
+export type SolverObjectiveKind = "moves";
 
 /**
- * Search objectives are explicit so a UI label such as "best" cannot silently
- * mean different things to different adapters.
+ * Sokomind searches minimize total movement. Pushes are still reported as a
+ * route statistic, but never alter search cost or state dominance.
  */
-export type SolverObjective =
-  | {
-      readonly kind: "moves";
-      readonly tieBreak: "pushes" | "none";
-    }
-  | {
-      readonly kind: "pushes";
-      readonly tieBreak: "moves" | "none";
-    }
-  | {
-      readonly kind: "combined";
-      readonly moveWeight: number;
-      readonly pushWeight: number;
-    };
+export interface SolverObjective {
+  readonly kind: "moves";
+}
 
 export interface SolverLimits {
   readonly maxElapsedMs?: number;

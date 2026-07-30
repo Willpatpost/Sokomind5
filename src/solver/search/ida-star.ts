@@ -93,30 +93,6 @@ function isSolved(
   );
 }
 
-function objectiveG(
-  objective: {
-    readonly kind: string;
-    readonly moveWeight?: number;
-    readonly pushWeight?: number;
-  },
-  moves: number,
-  pushes: number,
-): number {
-  switch (objective.kind) {
-    case "moves":
-      return moves;
-    case "pushes":
-      return pushes;
-    case "combined":
-      return (
-        moves * (objective.moveWeight ?? 1) +
-        pushes * (objective.pushWeight ?? 1)
-      );
-    default:
-      return pushes;
-  }
-}
-
 /**
  * Identify frozen boxes: boxes on their matching goal and locked on both
  * axes by walls or other frozen boxes. Uses a fixpoint loop.
@@ -355,7 +331,7 @@ export async function runIdaStarSearch(
     }
 
     const initialBoxSignature = canonicalBoxSignature(initialBoxes);
-    const initialG = objectiveG(request.objective, 0, 0);
+    const initialG = 0;
 
     // Pre-allocate reusable buffers
     const occupancyBuffer = new Uint8Array(board.cellCount);
@@ -507,11 +483,7 @@ export async function runIdaStarSearch(
               moves: steps.length,
               pushes: pushCount,
               objective: request.objective,
-              objectiveScore: objectiveG(
-                request.objective,
-                steps.length,
-                pushCount,
-              ),
+              objectiveScore: steps.length,
               optimality: "proven" as const,
             };
             const verification = verifySolverSolution(request, solution);
@@ -642,7 +614,7 @@ export async function runIdaStarSearch(
 
           const newMoves = frame.moves + distance + 1;
           const newPushes = frame.pushes + 1;
-          const newG = objectiveG(request.objective, newMoves, newPushes);
+          const newG = newMoves;
           const newBoxSignature = canonicalBoxSignature(newBoxes);
 
           const childFrame: StackFrame = {

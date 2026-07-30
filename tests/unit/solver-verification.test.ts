@@ -28,7 +28,7 @@ function makeRequest(rows: readonly string[]): SolverRequest {
   return {
     board: session.board,
     snapshot: session.snapshot,
-    objective: { kind: "moves", tieBreak: "pushes" },
+    objective: { kind: "moves" },
   };
 }
 
@@ -40,7 +40,7 @@ function makeSolution(
     steps,
     moves: steps.length,
     pushes,
-    objective: { kind: "moves", tieBreak: "pushes" },
+    objective: { kind: "moves" },
     objectiveScore: steps.length,
     optimality: "unknown",
   };
@@ -107,7 +107,7 @@ describe("solver solution verification", () => {
     assert.equal(result.stepIndex, 0);
   });
 
-  it("rejects legal paths that do not solve and objective substitutions", () => {
+  it("rejects legal paths that do not solve and obsolete objectives", () => {
     const request = makeRequest(["OOOOOO", "OR XSO", "OOOOOO"]);
     const unfinished = verifySolverSolution(
       request,
@@ -118,12 +118,12 @@ describe("solver solution verification", () => {
 
     const wrongObjective = verifySolverSolution(request, {
       ...makeSolution([{ direction: "right", kind: "walk" }], 0),
-      objective: { kind: "pushes", tieBreak: "moves" },
+      objective: { kind: "pushes" },
       objectiveScore: 0,
-    });
+    } as unknown as SolverSolution);
     assert.equal(wrongObjective.valid, false);
     if (!wrongObjective.valid) {
-      assert.equal(wrongObjective.code, "objective-mismatch");
+      assert.equal(wrongObjective.code, "invalid-solution");
     }
   });
 });

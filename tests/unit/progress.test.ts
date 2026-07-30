@@ -18,23 +18,25 @@ test("distinguishes invalid imports and merges only better records", () => {
 
   const current = recordCompletion(EMPTY_PROGRESS, "room", 20, 5);
   const worse = recordCompletion(EMPTY_PROGRESS, "room", 40, 6);
-  const better = recordCompletion(EMPTY_PROGRESS, "room", 25, 4);
+  const better = recordCompletion(EMPTY_PROGRESS, "room", 18, 6);
 
   assert.deepEqual(mergeProgress(current, worse).completed.room, current.completed.room);
   const merged = mergeProgress(current, better);
-  assert.equal(merged.completed.room?.pushes, 4);
+  assert.equal(merged.completed.room?.moves, 18);
   assert.equal(
     merged.completed.room?.completedAt,
     better.completed.room?.completedAt,
   );
 });
 
-test("completion records retain the best lexicographic push/move result", () => {
+test("completion records retain the route with the fewest moves", () => {
   const first = recordCompletion(EMPTY_PROGRESS, "tiny", 30, 8);
   const slower = recordCompletion(first, "tiny", 35, 8);
   const fewerPushes = recordCompletion(slower, "tiny", 50, 7);
+  const fewerMoves = recordCompletion(fewerPushes, "tiny", 20, 9);
 
   assert.equal(slower, first);
-  assert.equal(fewerPushes.completed.tiny.pushes, 7);
-  assert.equal(fewerPushes.completed.tiny.moves, 50);
+  assert.equal(fewerPushes, first);
+  assert.equal(fewerMoves.completed.tiny.pushes, 9);
+  assert.equal(fewerMoves.completed.tiny.moves, 20);
 });

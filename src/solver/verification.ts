@@ -3,7 +3,6 @@ import {
   type GameSnapshot,
 } from "../core/index.ts";
 import type {
-  SolverObjective,
   SolverRequest,
   SolverSolution,
 } from "./contracts.ts";
@@ -16,7 +15,6 @@ import {
 export type SolverVerificationCode =
   | "invalid-request"
   | "invalid-solution"
-  | "objective-mismatch"
   | "illegal-step"
   | "step-kind-mismatch"
   | "move-count-mismatch"
@@ -62,26 +60,6 @@ function failure(
   });
 }
 
-function objectivesEqual(
-  left: SolverObjective,
-  right: SolverObjective,
-): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "moves" && right.kind === "moves") {
-    return left.tieBreak === right.tieBreak;
-  }
-  if (left.kind === "pushes" && right.kind === "pushes") {
-    return left.tieBreak === right.tieBreak;
-  }
-  if (left.kind === "combined" && right.kind === "combined") {
-    return (
-      left.moveWeight === right.moveWeight &&
-      left.pushWeight === right.pushWeight
-    );
-  }
-  return false;
-}
-
 /**
  * Treats a solver result as untrusted input and replays every step through the
  * core transition API. A solution is accepted only when every declared action
@@ -113,13 +91,6 @@ export function verifySolverSolution(
     return failure(
       "invalid-solution",
       `Solver returned an invalid solution: ${detail}`,
-    );
-  }
-
-  if (!objectivesEqual(request.objective, solution.objective)) {
-    return failure(
-      "objective-mismatch",
-      "Solution objective does not match the requested objective.",
     );
   }
 

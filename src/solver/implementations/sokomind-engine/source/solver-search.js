@@ -1089,6 +1089,7 @@ function fessSearch(payload) {
         visited,
         generated,
         frontier: pendingActions,
+        retained: arena.size,
         featureCells: cells.size,
         featureCellVisits: cellVisits,
         arenaStates: arena.size,
@@ -1616,6 +1617,7 @@ function planMacroBeamSearch(payload) {
         depth: segment + 1,
         frontier: beam.length,
         generated,
+        retained: seen.size + seenExact.size,
         performance: performanceSnapshot(board.metrics),
       });
     }
@@ -1657,7 +1659,9 @@ function beamSearch(payload) {
   };
   const width = payload.beamWidth || 3000;
   const maxDepth = payload.maxDepth || 500;
-  const weight = payload.weight || 3;
+  const maxVisited = payload.maxVisited ?? Infinity;
+  const maxGenerated = payload.maxGenerated ?? Infinity;
+  const weight = payload.weight ?? 3;
   const diversity = payload.diversity ?? 1.5;
   const goalPackingWeight = payload.goalPackingWeight ?? 0.8;
   const mobilityWeight = payload.mobilityWeight ?? 0.03;
@@ -1693,6 +1697,18 @@ function beamSearch(payload) {
     payload.strategicSignalWarmup || 64,
     payload.strategicSignalCooldown || 512,
   );
+  if (maxVisited <= 0 || maxGenerated <= 0) {
+    return {
+      path: null,
+      visited: 0,
+      generated: 0,
+      retained: 0,
+      peakFrontier: 0,
+      cutoff: true,
+      terminationReason:
+        maxVisited <= 0 ? "state-budget" : "generated-budget",
+    };
+  }
 
   initial.reachable = reachablePaths(initial, board);
   if (createsSealedCorralDeadlock(initial, board, initial.reachable)) {
@@ -1722,7 +1738,7 @@ function beamSearch(payload) {
           transpositionEvictions: seenDepth.evictions + seenExactDepth.evictions,
         };
       }
-      if (payload.maxVisited && visited >= payload.maxVisited) {
+      if (visited >= maxVisited) {
         beamCutoff = true;
         break searchLayers;
       }
@@ -1839,7 +1855,7 @@ function beamSearch(payload) {
             ? `${current.openingHistory || ""}/${next.pushClass}`
             : current.openingHistory || "";
         }
-        const score = (payload.costWeight || 0) * child.cost +
+        const score = (payload.costWeight ?? 0) * child.cost +
           weight * estimate + topologyWeight * topology +
           evacuationWeight * evacuation -
           goalPackingWeight * packing +
@@ -1861,6 +1877,11 @@ function beamSearch(payload) {
           diversity * signatureNoise(child.exactIdentity, seed + 7919);
         const existing = candidates.get(child.exactIdentity);
         if (!existing || score < existing.score) {
+          if (!existing && generated + candidates.size >= maxGenerated) {
+            generated += candidates.size;
+            beamCutoff = true;
+            break searchLayers;
+          }
           const candidate = {
             ...child,
             node: {parent: current.node || null, segment: next.path},
@@ -1936,7 +1957,8 @@ function beamSearch(payload) {
       if (visited - reported >= progressInterval ||
           progressNow - lastProgressAt >= progressIntervalMs) {
         postMessage({type: "progress", visited: (payload.progressOffset || 0) + visited,
-          bestEstimate, bestPushes, frontier: beam.length, depth,
+          bestEstimate, bestPushes, frontier: beam.length, depth, generated,
+          retained: seenDepth.size + seenExactDepth.size,
           performance: performanceSnapshot(board.metrics)});
         reported = visited;
         lastProgressAt = progressNow;
@@ -2864,7 +2886,7 @@ function bridgeAStarSearch(payload) {
   const heuristicMemo = new Map();
   const frontier = new Heap(), bestCost = new Map(), closed = new Set();
   let cameFrom = new Map();
-  const weight = payload.weight || 1.4;
+  const weight = payload.weight ?? 1.4;
   const maxVisited = payload.maxVisited || 100000;
   const frontierLimit = payload.frontierLimit || 4000;
   let visited = 0, order = 0, bestEstimate = Infinity, bestCheckpoint = null;
@@ -3121,11 +3143,11 @@ function bidirectionalSide(payload) {
       emitLandmarks();
       postMessage({type: "progress", visited, delta: visited - reported,
         bestEstimate: bestLandmarkEstimate, frontier: frontier.length,
-        retained: bestCost.size, generated, peakFrontier, compactions,
+        retained: closed.size + bestCost.size, generated, peakFrontier, compactions,
         performance: performanceSnapshot(board.metrics)});
       postMessage({type: "done", visited, cutoff: true, terminationReason: "budget",
         bestEstimate: bestLandmarkEstimate, generated, peakFrontier, compactions,
-        frontier: frontier.length, retained: bestCost.size,
+        frontier: frontier.length, retained: closed.size + bestCost.size,
         performance: performanceSnapshot(board.metrics)});
       return;
     }
@@ -3163,7 +3185,7 @@ function bidirectionalSide(payload) {
     if (visited % 1000 === 0) {
       postMessage({type: "progress", visited, delta: visited - reported,
         bestEstimate: bestLandmarkEstimate, frontier: frontier.length,
-        retained: bestCost.size, generated, peakFrontier, compactions,
+        retained: closed.size + bestCost.size, generated, peakFrontier, compactions,
         performance: performanceSnapshot(board.metrics)});
       reported = visited;
     }
@@ -3178,11 +3200,11 @@ function bidirectionalSide(payload) {
   emitLandmarks();
   postMessage({type: "progress", visited, delta: visited - reported,
     bestEstimate: bestLandmarkEstimate, frontier: frontier.length,
-    retained: bestCost.size, generated, peakFrontier, compactions,
+    retained: closed.size + bestCost.size, generated, peakFrontier, compactions,
     performance: performanceSnapshot(board.metrics)});
   postMessage({type: "done", visited, cutoff: false, terminationReason: "exhausted",
     bestEstimate: bestLandmarkEstimate, generated, peakFrontier, compactions,
-    frontier: frontier.length, retained: bestCost.size,
+    frontier: frontier.length, retained: closed.size + bestCost.size,
     performance: performanceSnapshot(board.metrics)});
 }
 
@@ -3489,18 +3511,23 @@ function solutionWindowRewriteSearch(payload) {
   const windowSizes = payload.windowPushes || [8, 16, 32];
   const perWindowVisited = payload.windowVisited || 20000;
   let visited = permutationVisited, windows = 0;
+  const pushWindowLimit = Math.min(
+    maximumVisited,
+    permutationVisited +
+      (payload.windowTotalVisited ?? maximumVisited),
+  );
   let improvements = details.moves < initialQuality.moves ? 1 : 0;
 
   for (const windowPushes of windowSizes) {
     let startPush = Math.max(0, details.pushes - windowPushes);
-    while (startPush >= 0 && visited < maximumVisited) {
+    while (startPush >= 0 && visited < pushWindowLimit) {
       const endPush = Math.min(details.pushes, startPush + windowPushes);
       if (endPush <= startPush) break;
       const start = details.boundaries[startPush];
       const target = details.boundaries[endPush];
       if (!start || !target) break;
       const originalSegmentPushes = endPush - startPush;
-      const budget = Math.min(perWindowVisited, maximumVisited - visited);
+      const budget = Math.min(perWindowVisited, pushWindowLimit - visited);
       const result = bridgeAStarSearch({
         algorithm: "bridge-astar",
         state: serializedSearchState(start.state, board.rows),
@@ -3551,9 +3578,9 @@ function solutionWindowRewriteSearch(payload) {
     Math.max(0, maximumVisited - visited),
   );
   const moveWindowSizes = payload.moveWindowPushes || [1, 2, 4];
-  const moveWindowAttempts = payload.moveWindowAttempts || 6;
+  const moveWindowAttempts = payload.moveWindowAttempts ?? 6;
   const attemptedMoveWindows = new Set();
-  let moveVisited = 0;
+  let moveVisited = 0, moveImprovements = 0;
   for (let attempt = 0;
     attempt < moveWindowAttempts && moveVisited < moveWindowBudget;
     attempt++) {
@@ -3567,7 +3594,7 @@ function solutionWindowRewriteSearch(payload) {
         if (!start || !target) continue;
         const segmentMoves = target.moveIndex - start.moveIndex;
         const overhead = segmentMoves - windowPushes;
-        if (overhead < (payload.moveWindowMinimumOverhead || 6)) continue;
+        if (overhead < (payload.moveWindowMinimumOverhead ?? 6)) continue;
         const key = `${exactPushIdentity(start.state, board)}>` +
           `${exactPushIdentity(target.state, board)}>${windowPushes}`;
         if (attemptedMoveWindows.has(key)) continue;
@@ -3591,7 +3618,7 @@ function solutionWindowRewriteSearch(payload) {
       state: serializedSearchState(window.start.state, board.rows),
       targetState: serializedSearchState(window.target.state, board.rows),
       moveUpperBound: window.segmentMoves,
-      pushUpperBound: window.windowPushes + (payload.moveWindowExtraPushes || 4),
+      pushUpperBound: window.windowPushes + (payload.moveWindowExtraPushes ?? 4),
       maxVisited: budget,
     });
     moveVisited += result.visited || 0;
@@ -3609,6 +3636,7 @@ function solutionWindowRewriteSearch(payload) {
       path = candidate;
       details = candidateDetails;
       improvements++;
+      moveImprovements++;
     }
   }
   return {
@@ -3617,6 +3645,7 @@ function solutionWindowRewriteSearch(payload) {
     windows,
     improvements,
     moveVisited,
+    moveImprovements,
     permutationVisited,
     permutationGenerated,
     permutationImprovements,
@@ -3678,13 +3707,88 @@ function searchCore(payload) {
   if (payload.algorithm === "bounded-push-dfs") return boundedPushDepthFirstSearch(payload);
   if (payload.algorithm === "push-ida-star") return pushIterativeDeepeningAStar(payload);
   if (["ultimate", "portfolio", "fast"].includes(payload.algorithm)) {
-    const beam = beamSearch({...payload, algorithm: "push-beam"});
-    if (beam.path) return {...beam, strategy: "Push Beam"};
-    const greedy = search({...payload, algorithm: "push-greedy"});
-    if (greedy.path) return {...greedy, strategy: "Push Greedy"};
-    const weighted = search({...payload, algorithm: "weighted-push-astar"});
-    if (weighted.path) return {...weighted, strategy: "Weighted Push A*"};
-    return search({...payload, algorithm: "push-astar"});
+    const plans = [
+      ["push-beam", "Push Beam", 0.4],
+      ["push-greedy", "Push Greedy", 0.2],
+      ["weighted-push-astar", "Weighted Push A*", 0.1],
+      ["push-astar", "Push A*", 0],
+    ];
+    const maximumVisited = payload.maxVisited ?? Infinity;
+    const maximumGenerated = payload.maxGenerated ?? Infinity;
+    let visited = 0, generated = 0, retained = 0, peakFrontier = 0;
+    let transpositionEvictions = 0, anyCutoff = false, lastResult = null;
+    for (const [algorithm, label, futureReserveFraction] of plans) {
+      const remainingVisited = maximumVisited - visited;
+      const remainingGenerated = maximumGenerated - generated;
+      if (remainingVisited <= 0 || remainingGenerated <= 0) {
+        anyCutoff = true;
+        break;
+      }
+      const visitReserve = Number.isFinite(maximumVisited)
+        ? Math.min(
+            Math.max(0, remainingVisited - 1),
+            Math.floor(maximumVisited * futureReserveFraction),
+          )
+        : 0;
+      const generatedReserve = Number.isFinite(maximumGenerated)
+        ? Math.min(
+            Math.max(0, remainingGenerated - 1),
+            Math.floor(maximumGenerated * futureReserveFraction),
+          )
+        : 0;
+      const lanePayload = {
+        ...payload,
+        algorithm,
+        maxVisited: Number.isFinite(remainingVisited)
+          ? Math.max(1, remainingVisited - visitReserve)
+          : undefined,
+        maxGenerated: Number.isFinite(remainingGenerated)
+          ? Math.max(1, remainingGenerated - generatedReserve)
+          : undefined,
+      };
+      const generatedBefore = activePerformance?.pushCandidates || 0;
+      const result = algorithm === "push-beam"
+        ? beamSearch(lanePayload)
+        : searchCore(lanePayload);
+      const generatedAfter = activePerformance?.pushCandidates || generatedBefore;
+      const laneVisited = result.visited || 0;
+      const laneGenerated = result.generated ??
+        Math.max(laneVisited, generatedAfter - generatedBefore);
+      visited += laneVisited;
+      generated += laneGenerated;
+      retained = Math.max(retained, result.retained || 0);
+      peakFrontier = Math.max(peakFrontier, result.peakFrontier || 0);
+      transpositionEvictions += result.transpositionEvictions || 0;
+      anyCutoff ||= Boolean(result.cutoff);
+      lastResult = result;
+      if (result.path) {
+        return {
+          ...result,
+          strategy: label,
+          visited,
+          generated,
+          retained: Math.max(retained, result.retained || 0),
+          peakFrontier,
+          transpositionEvictions,
+        };
+      }
+    }
+    return {
+      ...(lastResult || {}),
+      path: null,
+      visited,
+      generated,
+      retained,
+      peakFrontier,
+      transpositionEvictions,
+      cutoff: anyCutoff ||
+        visited >= maximumVisited ||
+        generated >= maximumGenerated,
+      terminationReason:
+        visited >= maximumVisited ? "state-budget" :
+        generated >= maximumGenerated ? "generated-budget" :
+        "portfolio-exhausted",
+    };
   }
   const board = parse(payload.state), initial = {
     robot: payload.state.robot,
@@ -3705,7 +3809,9 @@ function searchCore(payload) {
   const bestCost = new Map(), closed = new Set();
   const pushMacro = ["push-astar", "push-greedy", "weighted-push-astar"].includes(algorithm);
   const weight = algorithm === "weighted-push-astar" ? 1.6 : 1;
-  let order = 0, visited = 0;
+  const maxVisited = payload.maxVisited ?? Infinity;
+  const maxGenerated = payload.maxGenerated ?? Infinity;
+  let order = 0, visited = 0, generated = 0;
   const score = (s) => algorithm === "bfs" ? s.cost :
     algorithm === "dfs" ? -s.cost :
     ["greedy", "push-greedy"].includes(algorithm)
@@ -3738,11 +3844,12 @@ function searchCore(payload) {
     if (payload._goalCutDomain
       ? goalCutComponentSolved(current.boxes, board, payload._goalCutDomain)
       : goal(current.boxes, board.goals)) {
-      return {path: reconstructPath(cameFrom, identity), visited};
+      return {path: reconstructPath(cameFrom, identity), visited, generated};
     }
     if (pushMacro && createsSealedCorralDeadlock(current, board, reachable)) continue;
-    if (payload.maxVisited && visited >= payload.maxVisited) {
-      return {path: null, visited, cutoff: true};
+    if (visited >= maxVisited) {
+      return {path: null, visited, generated, cutoff: true,
+        terminationReason: "state-budget"};
     }
     let nextStates = pushMacro ? pushNeighbors(current, board, reachable)
       .map(next => expandPushMacro(next, board, payload.forcedMacros !== false))
@@ -3765,14 +3872,22 @@ function searchCore(payload) {
         if (payload.upperBound && child.cost + heuristic(child.boxes, board) > payload.upperBound) continue;
         bestCost.set(child.exactIdentity, child.cost);
         frontier.push([childScore, order++, child]);
+        generated++;
       } else {
         frontier.push([score(child), order++, child]);
+        generated++;
+      }
+      if (generated >= maxGenerated) {
+        return {path: null, visited, generated, cutoff: true,
+          terminationReason: "generated-budget"};
       }
     }
     if (visited % 10000 === 0) postMessage({type: "progress", visited,
+      frontier: frontier.length,
+      retained: seen.size + bestCost.size + closed.size,
       performance: performanceSnapshot(board.metrics)});
   }
-  return {path: null, visited};
+  return {path: null, visited, generated};
 }
 
 const TERMINAL_STATUS = Object.freeze({

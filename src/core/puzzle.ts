@@ -95,7 +95,7 @@ function analyzeRows(rows: unknown): RowAnalysis {
 
     width = Math.max(width, [...row].length);
     [...row].forEach((symbol, columnIndex) => {
-      if (!SUPPORTED_SYMBOL.test(symbol)) {
+      if (!SUPPORTED_SYMBOL.test(symbol) || symbol === "x") {
         errors.push(
           issue(
             "unsupported-symbol",
