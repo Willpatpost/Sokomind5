@@ -10,18 +10,18 @@ async function openSolver(page: Page) {
   await page.getByRole("button", { name: "Open solver laboratory" }).click();
   const dialog = page.getByRole("dialog", { name: "Find a route" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Algorithm")).toHaveValue("classic-astar");
+  await expect(dialog.getByLabel("Algorithm")).toHaveValue("sokomind-solver");
   return dialog;
 }
 
-test("discovers the five search algorithms and exposes an accessible configuration", async ({
+test("discovers the six search algorithms and exposes an accessible configuration", async ({
   page,
 }) => {
   const dialog = await openSolver(page);
   const algorithm = dialog.getByLabel("Algorithm");
   const objective = dialog.getByLabel("Objective");
 
-  await expect(algorithm.locator("option")).toHaveCount(5);
+  await expect(algorithm.locator("option")).toHaveCount(6);
   await expect(objective).toHaveValue("pushes");
   await expect(dialog.getByLabel("Time limit")).toHaveValue("60000");
   await expect(dialog.getByRole("button", { name: "Start search" })).toBeEnabled();
@@ -41,10 +41,29 @@ test("discovers the five search algorithms and exposes an accessible configurati
   expect(results.violations).toEqual([]);
 });
 
+test("solves a typed room with Sokomind Solver and plays its verified route", async ({
+  page,
+}) => {
+  const dialog = await openSolver(page);
+
+  await dialog.getByRole("button", { name: "Start search" }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "Route found" }),
+  ).toBeVisible();
+  await expect(dialog).toContainText("Found 1 moves and 1 pushes.");
+  await expect(dialog).toContainText("Found by Sokomind Solver for Pushes.");
+  await expect(dialog).toContainText("First found");
+
+  await dialog.getByRole("button", { name: "Play solution" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "First Steps" })).toBeVisible();
+});
+
 test("solves First Steps with A* and plays the verified route", async ({
   page,
 }) => {
   const dialog = await openSolver(page);
+  await dialog.getByLabel("Algorithm").selectOption("classic-astar");
 
   await dialog.getByRole("button", { name: "Start search" }).click();
   await expect(
@@ -66,6 +85,24 @@ test("solves First Steps with A* and plays the verified route", async ({
   await expect(completion).toContainText("1 Push");
   await expect(page.getByTestId("moves-count")).toHaveText("1");
   await expect(page.getByTestId("pushes-count")).toHaveText("1");
+});
+
+test("Sokomind Solver finds a replay-verified Grand Hall route", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.goto("./#/play/huge");
+  await expect(page.getByRole("heading", { name: "Grand Hall" })).toBeVisible();
+
+  const dialog = await openSolver(page);
+  await dialog.getByRole("button", { name: "Start search" }).click();
+
+  await expect(
+    dialog.getByRole("heading", { name: "Route found" }),
+  ).toBeVisible({ timeout: 60_000 });
+  await expect(dialog).toContainText("Found 1,010 moves and 316 pushes.");
+  await expect(dialog).toContainText("Found by Sokomind Solver for Pushes.");
+  await expect(dialog.getByRole("button", { name: "Play solution" })).toBeEnabled();
 });
 
 test("cancels a running Grand Hall breadth-first search", async ({ page }) => {

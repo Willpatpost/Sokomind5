@@ -267,7 +267,12 @@ export function useSolverController({
           setSolvers(discovered);
           setSelectedSolverId((current) => {
             if (discovered.some(({ id }) => id === current)) return current;
-            return discovered.find(isAStar)?.id ?? discovered[0]?.id ?? "";
+            return (
+              discovered.find(({ id }) => id === "sokomind-solver")?.id ??
+              discovered.find(isAStar)?.id ??
+              discovered[0]?.id ??
+              ""
+            );
           });
           setUiPhase("ready");
           setStatusMessage(

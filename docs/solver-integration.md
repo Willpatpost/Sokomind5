@@ -1,6 +1,6 @@
 # Solver integration
 
-The solver package contains four production adapters plus the infrastructure
+The solver package contains six production adapters plus the infrastructure
 needed to add more. An algorithm becomes available by implementing
 `SolverAdapter` and registering it at the worker composition root.
 
@@ -8,12 +8,14 @@ needed to add more. An algorithm becomes available by implementing
 
 | Adapter | Frontier | Objectives | Guarantee |
 | --- | --- | --- | --- |
+| `sokomind-solver` | structural macro + guided/bidirectional portfolio | moves, pushes, combined | deterministic structural lane; first verified portfolio route |
 | `classic-dfs` | LIFO stack | moves, pushes, combined | deterministic first route |
 | `classic-bfs` | FIFO queue | pushes | minimum pushes |
 | `classic-greedy` | stable heuristic heap | moves, pushes, combined | deterministic first route |
 | `classic-astar` | stable `g + h` heap | moves, pushes, combined | optimal requested cost |
+| `classic-ida-star` | iterative deepening `f` contours | moves, pushes, combined | intended optimal search; see follow-up audit |
 
-All four use the same push-macro graph. A successor consists of an exact
+All five classic adapters use the same push-macro graph. A successor consists of an exact
 shortest keeper walk followed by one legal push. Search state retains the true
 post-push keeper cell and a canonical signature that treats boxes with the same
 label as interchangeable. For the pure push objective, keeper cells in the same
@@ -32,6 +34,56 @@ cannot cost more than the real one, so the assignment is admissible:
 Only proven static dead cells and fully blocked 2x2 formations are hard-pruned.
 Every candidate route is reconstructed from parent links and independently
 replayed through the core before it is returned.
+
+## Sokomind Solver
+
+`sokomind-solver` is the default interactive adapter. It ports the live search
+kernel from the earlier Sokomind sites into the typed adapter contract without
+bringing their UI or global director into the React application.
+
+The kernel baseline comes from Sokomind2. It uses the newer Sokomind assignment
+heuristic, which reuses an existing Hungarian matching when calculating linear
+conflicts. The newer guessed-region PI-corral prune, same-box tunnel forcing,
+default congestion score, and enlarged per-worker memory limits are deliberately
+excluded. The older guessed-region PI helper is also disabled as a hard prune;
+the exact reachable-region sealed-corral proof remains active.
+
+Large boards first compile a structured-clone-safe prepared board, then give
+the reviewed structural plan-macro beam a head start capped at 25 seconds and
+70% of any finite remaining time. Explicit expanded- and generated-state limits
+similarly reserve at least one state and normally 40% for discovery. If the
+structural lane misses or exhausts its share, the remaining budget goes to a
+guided push lane with compact forward and reverse frontiers when the browser
+has enough CPU and memory. This keeps Grand Hall's low-memory fast path while
+ensuring short runs still reach discovery. Smaller boards start directly with
+the discovery portfolio.
+
+Bidirectional meeting keys use compact typed box tokens; the adapter decodes
+those tokens before finding the robot-only bridge, fixing the obsolete key
+parser in the legacy UI director. Record batches now carry exact visited,
+generated, frontier, and retained counts. If nested workers are unavailable,
+the adapter falls back to the existing cooperative Greedy engine.
+
+The legacy kernel runs in a same-origin nested module worker. The outer solver
+worker therefore remains available to terminate the kernel on cancellation,
+elapsed-time, state, or estimated-memory limits. Concurrent worker estimates
+and retained bidirectional records are added against one run-wide ceiling;
+Chromium's non-standard process-wide heap sample is not mistaken for
+solver-owned memory. Unlimited runs also have a two-minute worker-silence
+watchdog; active progress resets it. Returned `Up/Down/Left/Right` paths are converted into
+exact walk/push steps by replaying `stepSnapshot()`. The result always reports
+`optimality: "unknown"` because this is a fast first-found portfolio, not an
+optimality proof.
+
+The reviewed Grand Hall guardrail uses the same structural settings as the
+production adapter. Base, mirrored, and rotated cases all replay with identical
+`1,010 moves / 316 pushes`, `1,843 visited`, and `13,844 generated` results.
+It is a deterministic kernel guardrail; a separate production Chrome test
+covers the nested-worker and UI path. Run the kernel guardrail explicitly with:
+
+```powershell
+npm.cmd run test:solver:huge
+```
 
 ## Contract
 
@@ -97,7 +149,7 @@ messages during CPU-heavy searches. Progress is emitted at a bounded cadence
 with elapsed time, expanded/generated states, live and peak frontier sizes,
 deduplication, pruning, heuristic, reachability, depth, and estimated-memory
 counters. The dialog keeps only a bounded, throttled status history.
-Interactive runs also carry a conservative 128 MiB estimated-memory ceiling so
+Interactive runs also carry a conservative estimated-memory ceiling so
 an unlimited-time search cannot consume the browser tab without bound.
 
 ## Hint system

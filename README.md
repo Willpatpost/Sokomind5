@@ -6,7 +6,7 @@ hosting layer with a portable Vite build.
 
 ## Highlights
 
-- All 32 validated puzzles from Sokomind
+- 2,194 validated puzzles, including 15 typed-box rooms
 - Responsive keyboard, touch, and mouse controls
 - Animated crates, matching goal sockets, and a characterful keeper
 - Optional procedural sound effects and ambient music with no downloaded audio
@@ -16,7 +16,10 @@ hosting layer with a portable Vite build.
 - Shareable puzzle/replay links and portable progress import/export
 - Installable offline PWA behavior with repository-subpath-safe assets
 - Pure immutable game rules with no React or browser dependencies
-- DFS, BFS, Greedy, and admissible A* search in a cancellation-safe worker
+- Default Sokomind Solver with structural macros, guided push search, and
+  compact bidirectional frontiers
+- DFS, BFS, Greedy, A*, and IDA* alternatives behind the same typed adapter
+  boundary
 - Live solver telemetry, bounded status history, and verified route playback
 - Automated unit, static, browser, accessibility, and Pages deployment checks
 
@@ -46,12 +49,15 @@ npm run typecheck
 npm run lint
 npm test
 npm run test:browser
+npm run test:solver:huge
 ```
 
 `npm test` runs domain and preference tests, creates the production build, and
 then verifies that every emitted script, stylesheet, and public asset is safe
 to deploy beneath a GitHub project-page path. `npm run test:browser` adds
 Playwright interaction tests and axe accessibility scans at `/Sokomind3/`.
+The intentionally separate `test:solver:huge` guardrail replay-solves Grand
+Hall in base, mirrored, and rotated orientations.
 
 ## GitHub Pages
 
@@ -67,7 +73,7 @@ domain, and through a local static server. See
 ## Project structure
 
 ```text
-Sokomind3/
+Sokomind5/
 |-- .github/                 Pages workflow and dependency updates
 |-- public/                  PWA, metadata assets, and .nojekyll
 |-- scripts/                 Cross-platform Pages preview/test helpers
@@ -88,6 +94,7 @@ Sokomind3/
 |-- docs/                    Architecture and extension guides
 |-- tests/
 |   |-- e2e/                 Playwright and axe browser tests
+|   |-- performance/         Explicit Grand Hall solver guardrail
 |   |-- unit/                Deterministic domain and runtime tests
 |   `-- static-build.test.mjs
 |-- index.html               Static metadata and application mount point
@@ -119,6 +126,7 @@ history, so long routes do not copy every earlier snapshot per move.
 - [Experience, sound, and motion](docs/experience.md)
 - [GitHub Pages deployment](docs/deployment.md)
 - [Solver integration](docs/solver-integration.md)
+- [Deferred follow-up audit](docs/sokomind5-follow-up-audit.md)
 - [Puzzle format](docs/puzzle-format.md)
 - [Testing strategy](docs/testing.md)
 - [Persistence and sharing](docs/persistence-and-sharing.md)
@@ -132,10 +140,14 @@ with invariant tests. Grand Hall contains 17 boxes.
 
 ## Current scope
 
-This repository is the static user application and extension architecture. Its
-first solver family provides deterministic push-macro DFS, push-optimal BFS,
-Greedy Best-First, and A*. A* uses a label-aware minimum assignment over
-wall-aware reverse-push distances; the bound is admissible for move, push, and
-weighted combined objectives. These general searches establish a tested
-baseline behind the adapter boundary. More specialized structural and macro
-solvers can be added without coupling them to React or board rendering.
+This repository is the static user application and extension architecture.
+`Sokomind Solver` is the default first-found search. It ports the strongest
+legacy typed-box kernel into an isolated nested worker and combines a
+deterministic structural plan lane with guided and bidirectional discovery.
+Every candidate is replayed through the immutable Sokomind5 core before the UI
+can expose it. The reviewed Grand Hall route completes in 1,010 moves and
+316 pushes with identical deterministic counters across three orientations.
+
+The classic family remains available for comparison and optimal searches. See
+the solver integration guide for guarantees and the follow-up audit for known
+optimality issues that should be addressed separately.

@@ -17,6 +17,7 @@ import type {
 } from "../../src/solver/contracts.ts";
 import { createDefaultSolverRegistry } from "../../src/solver/default-registry.ts";
 import {
+  BUILT_IN_SOLVERS,
   CLASSIC_SOLVERS,
   classicAStarSolver,
   classicBfsSolver,
@@ -198,7 +199,7 @@ function exactStepOracle(request: SolverRequest): {
 }
 
 describe("classic search strategies", () => {
-  it("registers all four deterministic worker-capable adapters", () => {
+  it("registers Sokomind Solver before all deterministic classic adapters", () => {
     const registry = createDefaultSolverRegistry();
     assert.deepEqual(
       CLASSIC_SOLVERS.map(({ metadata }) => metadata.id),
@@ -212,9 +213,14 @@ describe("classic search strategies", () => {
     );
     assert.deepEqual(
       registry.listMetadata().map(({ id }) => id),
-      CLASSIC_SOLVERS.map(({ metadata }) => metadata.id),
+      BUILT_IN_SOLVERS.map(({ metadata }) => metadata.id),
     );
-    for (const metadata of registry.listMetadata()) {
+    assert.equal(registry.listMetadata()[0]?.id, "sokomind-solver");
+    assert.equal(
+      registry.listMetadata()[0]?.capabilities.deterministic,
+      false,
+    );
+    for (const metadata of registry.listMetadata().slice(1)) {
       assert.equal(metadata.capabilities.deterministic, true);
       assert.equal(metadata.capabilities.partialState, true);
       assert.equal(

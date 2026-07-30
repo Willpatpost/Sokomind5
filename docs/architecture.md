@@ -46,9 +46,11 @@ artifact can live below a GitHub repository path.
 
 Algorithm adapters live under `src/solver/implementations`. The classic family
 shares dense geometry, reachability, assignment, deadlock, and frontier
-primitives under `src/solver/search`. Future solver families should keep their
-own implementation modules and promote primitives only when multiple
-implementations genuinely require them.
+primitives under `src/solver/search`. The default `sokomind-solver` family keeps
+its ported classic-script kernel under `sokomind-engine`, generated in the
+original dependency order and executed only in an isolated nested module
+worker. Future solver families should keep their own implementation modules and
+promote primitives only when multiple implementations genuinely require them.
 
 ## Game state
 
@@ -119,13 +121,29 @@ minimum-matches each label group to matching goals using wall- and
 support-aware reverse-push distances with all other boxes removed. This is a
 relaxation of the real puzzle, so it never overestimates the remaining cost.
 
-Search runs are isolated in `solver.worker.ts`. The engine yields through a
+Search runs are isolated in `solver.worker.ts`. The classic engine yields through a
 macrotask so run/cancel messages remain responsive, publishes throttled
 progress, and enforces elapsed-time, expanded-state, generated-state, and
 estimated-memory limits. Only conservative static and fully blocked 2x2
 deadlocks are hard-pruned. Parent links retain compact search history; the
 exact walking route is reconstructed and replay-verified only after a goal is
 found.
+
+The Sokomind Solver adds a second isolation boundary for the synchronous legacy
+kernel. `sokomind-engine.worker.ts` performs the CPU-heavy structural, guided,
+or bidirectional lane while the outer adapter aggregates telemetry and can
+terminate that worker. This avoids `importScripts`, blob workers, `eval`, DOM
+state, and legacy local-storage coupling, all of which conflict with the module
+worker architecture or production CSP.
+
+For large boards, a short analysis worker creates a structured-clone-safe seed
+containing immutable geometry, topology, and push-distance tables. Search
+workers rehydrate that seed with private mutable memo tables whenever their row
+orientation matches it; canonical transformed structural orientations safely
+rebuild geometry. The structural lane receives a bounded fractional head start
+before the direct/bidirectional discovery portfolio, so it neither competes
+with Grand Hall for the browser memory ceiling nor monopolizes an entire
+unsuccessful short run.
 
 For pure push searches, the identity also canonicalizes the keeper's reachable
 component, collapsing positions that enable exactly the same next pushes. The

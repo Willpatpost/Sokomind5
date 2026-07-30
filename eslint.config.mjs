@@ -6,7 +6,14 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  { ignores: ["dist/**", "coverage/**"] },
+  {
+    ignores: [
+      "dist/**",
+      "coverage/**",
+      "src/solver/implementations/sokomind-engine/engine.generated.js",
+      "src/solver/implementations/sokomind-engine/source/**",
+    ],
+  },
   {
     files: ["**/*.{ts,tsx}"],
     extends: [
