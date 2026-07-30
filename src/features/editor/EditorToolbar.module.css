@@ -1,0 +1,52 @@
+.toolbar {
+  display: grid;
+  gap: 14px;
+}
+
+.group {
+  display: grid;
+  gap: 3px;
+}
+
+.groupLabel {
+  margin: 0 0 4px;
+  color: var(--ink-muted);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tool {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--paper-300);
+  border-radius: 8px;
+  color: var(--ink-700);
+  background: var(--paper-50);
+  font-size: 0.62rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    border-color 100ms ease,
+    background 100ms ease;
+}
+
+.tool:hover {
+  border-color: var(--sage-500);
+}
+
+.tool[data-active] {
+  border-color: var(--sage-700);
+  color: var(--paper-50);
+  background: var(--sage-700);
+}

@@ -1,0 +1,78 @@
+.grid {
+  display: grid;
+  gap: 1px;
+  padding: 8px;
+  border: 1px solid var(--paper-300);
+  border-radius: var(--radius-md);
+  background: var(--ink-950);
+  user-select: none;
+}
+
+.cell {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  font-size: 0.6rem;
+  font-weight: 900;
+  cursor: pointer;
+  transition: filter 100ms ease;
+}
+
+.cell:hover {
+  filter: brightness(1.15);
+}
+
+.cell[data-symbol="O"] {
+  background: #343832;
+  color: #6a6e68;
+}
+
+.cell[data-symbol=" "] {
+  background: #e8e0cf;
+  color: #aaa494;
+}
+
+.cell[data-symbol="R"] {
+  background: var(--blue-500);
+  color: var(--paper-50);
+}
+
+.cell[data-symbol="X"] {
+  background: var(--amber-500);
+  color: var(--paper-50);
+}
+
+.cell[data-symbol="S"] {
+  background: transparent;
+  border: 2px solid var(--sage-600);
+  color: var(--sage-700);
+}
+
+.cell[data-labeled-box] {
+  background: var(--amber-400);
+  color: #3a2a10;
+}
+
+.cell[data-labeled-goal] {
+  background: transparent;
+  border: 2px solid var(--sage-600);
+  color: var(--sage-700);
+}
+
+:global(html[data-theme="dark"]) .grid {
+  background: #1a1c18;
+}
+
+:global(html[data-theme="dark"]) .cell[data-symbol="O"] {
+  background: #4a4e48;
+}
+
+:global(html[data-theme="dark"]) .cell[data-symbol=" "] {
+  background: #3a3830;
+  color: #5a5850;
+}
