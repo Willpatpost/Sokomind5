@@ -386,4 +386,5 @@
   border-color: var(--coral-500);
   color: #171916;
   background: var(--coral-500);
+  transition: border-color 150ms ease;
 }

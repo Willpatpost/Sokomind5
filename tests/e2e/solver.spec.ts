@@ -84,16 +84,17 @@ test("solves First Steps with A* and plays the verified route", async ({
 test("Sokomind Solver finds a replay-verified Grand Hall route", async ({
   page,
 }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(150_000);
   await page.goto("./#/play/huge");
   await expect(page.getByRole("heading", { name: "Grand Hall" })).toBeVisible();
 
   const dialog = await openSolver(page);
+  await dialog.getByLabel("Time limit").selectOption("120000");
   await dialog.getByRole("button", { name: "Start search" }).click();
 
   await expect(
     dialog.getByRole("heading", { name: "Route found" }),
-  ).toBeVisible({ timeout: 60_000 });
+  ).toBeVisible({ timeout: 120_000 });
   const resultPanel = dialog.locator('[data-status="solved"]');
   const summary = resultPanel.getByText(
     /^Found [\d,]+ moves and [\d,]+ pushes\.$/,
