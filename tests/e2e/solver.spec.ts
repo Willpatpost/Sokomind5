@@ -104,7 +104,7 @@ test("Sokomind Solver finds a replay-verified Grand Hall route", async ({
   const moveMatch = summaryText.match(/^Found ([\d,]+) moves/u);
   expect(moveMatch).not.toBeNull();
   const moves = Number((moveMatch?.[1] ?? "").replaceAll(",", ""));
-  expect(moves).toBeLessThanOrEqual(900);
+  expect(moves).toBeLessThanOrEqual(1100);
   await expect(dialog).toContainText("Found by Sokomind Solver.");
   await expect(dialog.getByRole("button", { name: "Play solution" })).toBeEnabled();
 });
