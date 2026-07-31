@@ -1,6 +1,6 @@
 # Persistence and sharing
 
-Sokomind3 remains account-free and server-free. Attempts, personal bests, and
+Sokomind remains account-free and server-free. Attempts, personal bests, and
 experience preferences are stored only in the current browser unless the user
 chooses to export or share them.
 
@@ -9,9 +9,9 @@ chooses to export or share them.
 All keys are namespaced because GitHub project pages under one user domain
 share a Web Storage origin:
 
-- `sokomind3.session.v1` — current puzzle plus its canonical action log;
-- `sokomind3.progress.v1` — best completed route per puzzle;
-- `sokomind3.experience.v1` — audio, volume, and motion preferences.
+- `sokomind.session.v1` — current puzzle plus its canonical action log;
+- `sokomind.progress.v1` — best completed route per puzzle;
+- `sokomind.experience.v1` — audio, volume, and motion preferences.
 
 The storage adapter catches unavailable-storage and quota errors. Earlier
 unnamespaced prototype values are read once for compatibility and copied into

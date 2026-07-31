@@ -95,7 +95,7 @@ export function loadSession(
     }
   }
 
-  // One-time compatibility with the earlier Sokomind3 prototype, which saved
+  // One-time compatibility with the earlier Sokomind prototype, which saved
   // only the current puzzle id under the unnamespaced key.
   const legacyPuzzleId = readStoredValue(LEGACY_STORAGE_KEYS.currentPuzzle);
   const legacyPuzzle = legacyPuzzleId

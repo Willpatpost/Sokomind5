@@ -1,6 +1,6 @@
 # Testing
 
-Sokomind3 uses Node's built-in `node:test` runner for deterministic domain and
+Sokomind uses Node's built-in `node:test` runner for deterministic domain and
 preference tests. The production artifact receives a second pass after Vite
 builds it.
 
@@ -61,7 +61,7 @@ This test is the GitHub Pages portability guard.
 
 ### Browser and accessibility
 
-`tests/e2e` runs Playwright against the built artifact at `/Sokomind3/`. It
+`tests/e2e` runs Playwright against the built artifact at `/Sokomind/`. It
 covers solving, exact reload recovery, undo, guarded reset, modal input
 isolation, sound and reduced-motion persistence, Grand Hall deep links, mobile
 Help/library access, control ordering, completion feedback, worker discovery,

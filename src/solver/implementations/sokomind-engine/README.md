@@ -3,7 +3,7 @@
 This directory contains the search kernel used by the **Sokomind Solver**
 adapter.
 
-The baseline modules were ported from `Sokomind2/src`. `heuristic.js` comes
+The baseline modules were ported from `Sokomind/src`. `heuristic.js` comes
 from the newer `Sokomind/src` implementation because it reuses the existing
 Hungarian assignment when calculating linear conflicts instead of solving the
 same assignment twice.

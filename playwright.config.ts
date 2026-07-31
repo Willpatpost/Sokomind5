@@ -7,7 +7,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://127.0.0.1:4173/Sokomind3/",
+    baseURL: "http://127.0.0.1:4173/Sokomind/",
     channel: process.env.CI ? undefined : "chrome",
     serviceWorkers: "block",
     trace: "on-first-retry",

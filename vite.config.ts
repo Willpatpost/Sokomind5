@@ -6,7 +6,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 
 const DEFAULT_PUBLIC_SITE_URL =
-  "https://willpatpost.github.io/Sokomind3/";
+  "https://willpatpost.github.io/Sokomind/";
 
 function normalizeSiteUrl(value: string): string {
   const url = new URL(value);

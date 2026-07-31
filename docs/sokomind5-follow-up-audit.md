@@ -1,4 +1,4 @@
-# Sokomind5 follow-up audit
+# Sokomind follow-up audit
 
 This is the issue list gathered while porting and strengthening Sokomind
 Solver. Resolved items remain documented so their regressions stay visible.
@@ -76,7 +76,7 @@ one-box solve completed under a declared 128-byte memory ceiling.
 ## Repository and documentation debt
 
 - Package, storage, deployment, and architecture text still contain the old
-  Sokomind3 name and site path.
+  Sokomind name and site path.
 - The checkout tracks `node_modules`, `dist`, and failed Playwright artifacts
   and has no `.gitignore`.
 - The tracked dependency tree was copied from Linux and omitted Windows native

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const HOST = "127.0.0.1";
 const PORT = 4173;
-const BASE_PATH = "/Sokomind3/";
+const BASE_PATH = "/Sokomind/";
 const DIST = fileURLToPath(new URL("../dist/", import.meta.url));
 
 const CONTENT_TYPES = new Map([
@@ -62,7 +62,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Sokomind3 preview: http://${HOST}:${PORT}${BASE_PATH}`);
+  console.log(`Sokomind preview: http://${HOST}:${PORT}${BASE_PATH}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

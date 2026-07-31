@@ -71,7 +71,7 @@ test("production output is installable and omits public source maps", async () =
     manifest.icons.map((icon) => icon.sizes),
     ["192x192", "512x512"],
   );
-  assert.match(worker, /sokomind3-shell/);
+  assert.match(worker, /sokomind-shell/);
   assert.equal(
     assets.some((asset) => asset.endsWith(".map")),
     false,

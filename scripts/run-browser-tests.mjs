@@ -8,7 +8,7 @@ const PREVIEW_SCRIPT = fileURLToPath(
 const PLAYWRIGHT_CLI = fileURLToPath(
   new URL("../node_modules/@playwright/test/cli.js", import.meta.url),
 );
-const PREVIEW_URL = "http://127.0.0.1:4173/Sokomind3/";
+const PREVIEW_URL = "http://127.0.0.1:4173/Sokomind/";
 
 let previewAlreadyRunning = false;
 try {

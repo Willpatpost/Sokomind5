@@ -1,6 +1,6 @@
 # GitHub Pages deployment
 
-Sokomind3 produces a static `dist/` directory and deploys it with
+Sokomind produces a static `dist/` directory and deploys it with
 `.github/workflows/deploy-pages.yml`.
 
 ## One-time repository setting
@@ -18,7 +18,7 @@ Every pull request, push to `main`, or manual workflow dispatch performs:
 3. lint;
 4. unit tests and production build;
 5. static artifact tests;
-6. Playwright and axe tests beneath `/Sokomind3/`.
+6. Playwright and axe tests beneath `/Sokomind/`.
 
 Pull requests stop there. Pushes to `main` and manual runs additionally upload
 the Pages artifact and deploy through the `github-pages` environment. The
@@ -45,7 +45,7 @@ const worker = new Worker(
 
 For a file in `public/`, use a relative HTML path or
 `import.meta.env.BASE_URL`. Do not hard-code `/assets/...`; that points at the
-host root and breaks a project site mounted at `/Sokomind3/`.
+host root and breaks a project site mounted at `/Sokomind/`.
 
 Puzzle and replay routes use the URL hash, so a `404.html` fallback remains
 unnecessary.
@@ -53,7 +53,7 @@ unnecessary.
 ## Public metadata
 
 The default canonical URL is
-`https://willpatpost.github.io/Sokomind3/`. Set `VITE_PUBLIC_SITE_URL` during
+`https://willpatpost.github.io/Sokomind/`. Set `VITE_PUBLIC_SITE_URL` during
 the build when the repository is renamed or moved to a custom domain. Include
 the final path; the build normalizes a missing trailing slash.
 

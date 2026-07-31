@@ -96,12 +96,12 @@ test("navigation helpers produce correct hashes", () => {
 
 test("preserves a static-site path when creating share URLs", () => {
   const url = createShareUrl(
-    { origin: "https://example.test", pathname: "/Sokomind3/index.html" },
+    { origin: "https://example.test", pathname: "/Sokomind/index.html" },
     "huge",
     "RR",
   );
   assert.equal(
     url,
-    "https://example.test/Sokomind3/index.html#/play/huge?play=RR",
+    "https://example.test/Sokomind/index.html#/play/huge?play=RR",
   );
 });

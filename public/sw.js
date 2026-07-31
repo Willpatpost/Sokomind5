@@ -1,4 +1,4 @@
-const CACHE_PREFIX = "sokomind3-shell";
+const CACHE_PREFIX = "sokomind-shell";
 const CACHE_NAME = `${CACHE_PREFIX}-v2`;
 const SHELL = [
   "./",

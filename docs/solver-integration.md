@@ -38,7 +38,7 @@ replayed through the core before it is returned.
 kernel from the earlier Sokomind sites into the typed adapter contract without
 bringing their UI or global director into the React application.
 
-The kernel baseline comes from Sokomind2. It uses the newer Sokomind assignment
+The kernel baseline comes from Sokomind. It uses the newer Sokomind assignment
 heuristic, which reuses an existing Hungarian matching when calculating linear
 conflicts. The newer guessed-region PI-corral prune, same-box tunnel forcing,
 default congestion score, and enlarged per-worker memory limits are deliberately

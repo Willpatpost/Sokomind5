@@ -23,7 +23,7 @@ function downloadProgress(progress: ProgressData) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `sokomind3-progress-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = `sokomind-progress-${new Date().toISOString().slice(0, 10)}.json`;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
@@ -54,7 +54,7 @@ export function ProgressDialog({
 
     const imported = tryParseProgress(await file.text());
     if (!imported) {
-      setMessage("That file does not contain valid Sokomind3 progress.");
+      setMessage("That file does not contain valid Sokomind progress.");
       return;
     }
 

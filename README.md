@@ -1,7 +1,7 @@
-# Sokomind5
+# Sokomind
 
 A polished, fully static Sokoban application built for GitHub Pages. It keeps
-Sokomind3's clean domain and solver boundaries while replacing its server
+Sokomind's clean domain and solver boundaries while replacing its server
 hosting layer with a portable Vite build.
 
 ## Highlights
@@ -56,7 +56,7 @@ npm run benchmark:solver -- --puzzle=huge
 `npm test` runs domain and preference tests, creates the production build, and
 then verifies that every emitted script, stylesheet, and public asset is safe
 to deploy beneath a GitHub project-page path. `npm run test:browser` adds
-Playwright interaction tests and axe accessibility scans at `/Sokomind3/`.
+Playwright interaction tests and axe accessibility scans at `/Sokomind/`.
 The intentionally separate `test:solver:huge` guardrail replay-solves Grand
 Hall in base, mirrored, and rotated orientations and checks the reviewed
 move-count rewrite. `benchmark:solver` emits JSON Lines for the isolated
@@ -70,14 +70,14 @@ The workflow at `.github/workflows/deploy-pages.yml` validates and deploys
 screen, choose **GitHub Actions** as the publishing source once. No generated
 build files need to be committed.
 
-Vite uses `base: "./"`, so the same output works at `/Sokomind3/`, on a custom
+Vite uses `base: "./"`, so the same output works at `/Sokomind/`, on a custom
 domain, and through a local static server. See
 [docs/deployment.md](docs/deployment.md) for the complete deployment contract.
 
 ## Project structure
 
 ```text
-Sokomind5/
+Sokomind/
 |-- .github/                 Pages workflow and dependency updates
 |-- public/                  PWA, metadata assets, and .nojekyll
 |-- scripts/                 Cross-platform Pages preview/test helpers
@@ -130,7 +130,7 @@ history, so long routes do not copy every earlier snapshot per move.
 - [Experience, sound, and motion](docs/experience.md)
 - [GitHub Pages deployment](docs/deployment.md)
 - [Solver integration](docs/solver-integration.md)
-- [Deferred follow-up audit](docs/sokomind5-follow-up-audit.md)
+- [Deferred follow-up audit](docs/sokomind-follow-up-audit.md)
 - [Puzzle format](docs/puzzle-format.md)
 - [Testing strategy](docs/testing.md)
 - [Persistence and sharing](docs/persistence-and-sharing.md)
@@ -148,7 +148,7 @@ This repository is the static user application and extension architecture.
 `Sokomind Solver` is the default bounded search. It ports the strongest
 legacy typed-box kernel into an isolated nested worker and combines a
 deterministic structural plan lane with guided and bidirectional discovery.
-Every candidate is replayed through the immutable Sokomind5 core before the UI
+Every candidate is replayed through the immutable Sokomind core before the UI
 can expose it. Its deterministic Grand Hall discovery route is 1,010 moves /
 316 pushes; the production move-rewrite pass reduces that to 874 moves /
 304 pushes in the Node benchmark. This is a substantial quality gain, not a

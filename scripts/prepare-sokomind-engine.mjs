@@ -35,7 +35,7 @@ const banner = `/*
  * Regenerate with: npm run prepare:sokomind-solver
  *
  * Provenance:
- * - baseline search engine: ../Sokomind2/src
+ * - baseline search engine: ../Sokomind/src
  * - assignment heuristic: ../Sokomind/src/heuristic.js
  * - adapter protocol: record telemetry and structural generated-state cap
  *

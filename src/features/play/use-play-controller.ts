@@ -108,7 +108,7 @@ export function usePlayController(puzzleId: string, actionLog?: string) {
     progressOpen ||
     playback.active ||
     session.moves === 0;
-  const timer = useTimer({ paused: timerPaused, persistKey: "sokomind3:timer" });
+  const timer = useTimer({ paused: timerPaused, persistKey: "sokomind:timer" });
   const timerResetRef = useRef(timer.reset);
   useEffect(() => {
     timerResetRef.current = timer.reset;

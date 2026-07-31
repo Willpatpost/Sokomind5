@@ -1,6 +1,6 @@
 # Architecture
 
-Sokomind3 is a static React application organized around an immutable domain
+Sokomind is a static React application organized around an immutable domain
 core. Rendering, browsing, persistence, sound, motion, and solving are
 consumers of the core rather than alternate owners of game state.
 
@@ -75,9 +75,9 @@ respond to an event without entering the core.
 
 Storage access is centralized, namespaced, versioned, and exception-safe:
 
-- `sokomind3.progress.v1`
-- `sokomind3.experience.v1`
-- `sokomind3.session.v1`
+- `sokomind.progress.v1`
+- `sokomind.experience.v1`
+- `sokomind.session.v1`
 
 Session coordinates are never deserialized directly; saved actions replay
 through the core. Puzzle progress never depends on sound or motion preferences.

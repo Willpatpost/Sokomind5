@@ -6,7 +6,7 @@ contract.
 
 ## Preferences
 
-`ExperienceProvider` stores a versioned `sokomind3.experience.v1` record:
+`ExperienceProvider` stores a versioned `sokomind.experience.v1` record:
 
 - master audio;
 - procedural music;
